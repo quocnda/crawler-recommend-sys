@@ -225,14 +225,14 @@ def get_base_url_company(start_url: str) -> List[str]:
     return ans
 
 
-def get_detail_information(company_url: str) -> pd.DataFrame:
+def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
     """
     Lấy bảng reviews + social links từ 1 trang company.
     """
     resp = http_get(company_url)
     if not resp:
         print(f"⚠️ Bỏ qua (403/timeout): {company_url}", file=sys.stderr)
-        return pd.DataFrame()
+        return "TIME_OUT",pd.DataFrame()
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -242,7 +242,7 @@ def get_detail_information(company_url: str) -> pd.DataFrame:
     reviews_wrap = soup.find("div", class_="profile-reviews--list__wrapper")
     if not reviews_wrap:
         print(f"ℹ️ Không thấy reviews: {company_url}")
-        return pd.DataFrame()
+        return "NO_REVIEW",pd.DataFrame()
 
     rows = []
     elements = reviews_wrap.find_all("article", class_="profile-review")
@@ -262,7 +262,7 @@ def get_detail_information(company_url: str) -> pd.DataFrame:
 
     df = pd.DataFrame(rows)
     if df.empty:
-        return df
+        return "NO_REVIEW", df
 
     preferred_cols = [
         "reviewer_name",
@@ -281,7 +281,7 @@ def get_detail_information(company_url: str) -> pd.DataFrame:
     cols = [c for c in preferred_cols if c in df.columns] + [
         c for c in df.columns if c not in preferred_cols
     ]
-    return df.loc[:, cols]
+    return "HAVE_REVIEW",df.loc[:, cols]
 
 
 # =========================
@@ -365,19 +365,20 @@ def save_checkpoint(ckpt_file: str, state: Dict[str, Any]) -> None:
     tmp.replace(p)
 
 # ==== Retry wrapper cho get_detail_information ====
-def get_detail_information_with_retry(url: str, max_retry: int = 3, backoff_base: float = 0.8) -> pd.DataFrame:
+def get_detail_information_with_retry(url: str, max_retry: int = 3, backoff_base: float = 0.8) -> tuple[str, pd.DataFrame]:
+    
     for attempt in range(1, max_retry + 1):
         try:
-            df = get_detail_information(url)  # <- dùng hàm gốc của bạn
+            status, df = get_detail_information(url)  # <- dùng hàm gốc của bạn
             if df is None:
                 df = pd.DataFrame()
-            return df
+            return status, df
         except Exception as e:
             if attempt == max_retry:
-                return pd.DataFrame()
+                return "ERROR", pd.DataFrame()
             sleep_s = (backoff_base ** attempt) + random.uniform(0.05, 0.25)
             time.sleep(sleep_s)
-    return pd.DataFrame()
+    return "TIME_OUT", pd.DataFrame()
 
 def process_company(url: str) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
     """
@@ -386,13 +387,15 @@ def process_company(url: str) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
     train_parts: List[pd.DataFrame] = []
     test_parts: List[pd.DataFrame] = []
 
-    for i in range(2):
+    for i in range(5):
         if i == 0:
             url_review = url
         else:
             url_review = f"{url}?page={i}#reviews"
 
-        df = get_detail_information_with_retry(url_review)
+        status, df = get_detail_information_with_retry(url_review)
+        if status in ("TIME_OUT", "ERROR", "NO_REVIEW"):
+            return train_df, test_df, url
         if df is not None and not df.empty and len(df) > 5:
             tr, te = train_test_split(df, test_size=0.3, shuffle=True, random_state=42)
             train_parts.append(tr)
@@ -421,7 +424,7 @@ def main() -> None:
     if not Path(test_out_path).exists():
         pd.DataFrame().to_csv(test_out_path, index=False)
 
-    for com in range(last_page, 2):
+    for com in range(last_page, 3):
         start_url = args.start_url
         # (Gợi ý) Có thể muốn set page luôn (không chỉ com==1) tùy site:
         if com > 1:
