@@ -25,14 +25,16 @@ from urllib.parse import urljoin
 from sklearn.model_selection import train_test_split
 import pandas as pd
 from bs4 import BeautifulSoup
-
+from pathlib import Path
+from typing import Tuple, List, Dict, Any
+import shutil, random, tempfile, json
 try:
     from tqdm import tqdm
 except Exception:  # pragma: no cover
     # Fallback khi không cài tqdm
     def tqdm(x, **kwargs):
         return x
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from curl_cffi import requests as creq
 
 
@@ -305,40 +307,184 @@ def parse_args() -> argparse.Namespace:
         default="clutch_reviews.csv",
         help="Đường dẫn file CSV xuất ra (default: clutch_reviews.csv)",
     )
-    return p.parse_args()
+    p.add_argument(
+        '--checkpoint',
+        type=str,
+        default='checkpoint.json',
+        help='File checkpoint để lưu trạng thái crawl (default: checkpoint.json)',
+    )
+    p.add_argument(
+        '--workers',
+        type=int,
+        default=8,
+        help='Số worker threads để crawl đồng thời (default: 8)',
+    )
+    p.add_argument(
+        '--flush-every',
+        type=int,
+        default=20,
+        help='Flush kết quả ra file sau mỗi N company (default: 20)',
+    )
+    p.add_argument(
+        '--last_page',
+        type=int,
+        default=1,
+        help='Trang cuối cùng crawl (default: 1)',
+    )
+    return p.parse_args()   
 
+SLEEP_MIN, SLEEP_MAX = 0.5, 1.5  
+
+# ==== Helper: atomic write CSV ====
+def atomic_write_csv(df: pd.DataFrame, path: str, mode: str = "w", header: bool = True) -> None:
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    if mode == "a" and path.exists():
+        df.to_csv(tmp, index=False, header=False)
+        with open(path, "ab") as fout, open(tmp, "rb") as fin:
+            shutil.copyfileobj(fin, fout)
+        tmp.unlink(missing_ok=True)
+    else:
+        df.to_csv(tmp, index=False, header=header)
+        tmp.replace(path)
+
+# ==== Checkpoint ====
+def load_checkpoint(ckpt_file: str) -> Dict[str, Any]:
+    p = Path(ckpt_file)
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return {"done_urls": [], "last_page": 1}
+    return {"done_urls": [], "last_page": 1}
+
+def save_checkpoint(ckpt_file: str, state: Dict[str, Any]) -> None:
+    p = Path(ckpt_file)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(p)
+
+# ==== Retry wrapper cho get_detail_information ====
+def get_detail_information_with_retry(url: str, max_retry: int = 3, backoff_base: float = 0.8) -> pd.DataFrame:
+    for attempt in range(1, max_retry + 1):
+        try:
+            df = get_detail_information(url)  # <- dùng hàm gốc của bạn
+            if df is None:
+                df = pd.DataFrame()
+            return df
+        except Exception as e:
+            if attempt == max_retry:
+                return pd.DataFrame()
+            sleep_s = (backoff_base ** attempt) + random.uniform(0.05, 0.25)
+            time.sleep(sleep_s)
+    return pd.DataFrame()
+
+def process_company(url: str) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
+    """
+    Trả về (train_df, test_df, url) cho 1 company.
+    """
+    train_parts: List[pd.DataFrame] = []
+    test_parts: List[pd.DataFrame] = []
+
+    for i in range(2):
+        if i == 0:
+            url_review = url
+        else:
+            url_review = f"{url}?page={i}#reviews"
+
+        df = get_detail_information_with_retry(url_review)
+        if df is not None and not df.empty and len(df) > 5:
+            tr, te = train_test_split(df, test_size=0.3, shuffle=True, random_state=42)
+            train_parts.append(tr)
+            test_parts.append(te)
+
+        time.sleep(random.uniform(SLEEP_MIN, SLEEP_MAX))
+
+    train_df = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame()
+    test_df  = pd.concat(test_parts,  ignore_index=True) if test_parts  else pd.DataFrame()
+    return train_df, test_df, url
 
 def main() -> None:
     args = parse_args()
+    out_path = args.out
+    test_out_path = f"{out_path.replace('.csv', '_test.csv')}"
+    ckpt_file = getattr(args, "checkpoint", "checkpoint.json")
+    workers = max(1, getattr(args, "workers", 8))
+    flush_every = max(1, getattr(args, "flush_every", 20)) 
 
-    # Lấy danh sách company URLs
-    company_urls = get_base_url_company(args.start_url)
-    if not company_urls:
-        print("⚠️ Không có URL công ty nào được tìm thấy. Kết thúc.", file=sys.stderr)
-        return
+    state = load_checkpoint(ckpt_file)
+    done_urls = set(state.get("done_urls", []))
+    last_page = int(state.get("last_page", 1))
 
-    # limit = max(0, args.limit or 0)
-    # if limit:
-    #     company_urls = company_urls[:limit]
+    if not Path(out_path).exists():
+        pd.DataFrame().to_csv(out_path, index=False)
+    if not Path(test_out_path).exists():
+        pd.DataFrame().to_csv(test_out_path, index=False)
 
-    all_df = pd.DataFrame()
-    test_df = pd.DataFrame()
-    for url in tqdm(company_urls, desc="Crawling companies"):
-        df = get_detail_information(url)
-        if not df.empty:
-            train_data, test_data = train_test_split(df, test_size=0.3)
-            all_df = pd.concat([all_df, train_data], ignore_index=True)
-            test_df = pd.concat([test_df,test_data], ignore_index=True)
-        # ngủ ngẫu nhiên giảm rate-limit
-        time.sleep(random.uniform(SLEEP_MIN, SLEEP_MAX))
+    for com in range(last_page, 2):
+        start_url = args.start_url
+        # (Gợi ý) Có thể muốn set page luôn (không chỉ com==1) tùy site:
+        if com > 1:
+            start_url = f"{start_url}?page={com}"
 
-    if not all_df.empty:
-        all_df.to_csv(args.out, index=False)
-        test_df.to_csv(f"{(args.out).replace('.csv', '_test.csv')}", index=False)
-        print(f"✅ Đã ghi {len(all_df)} dòng vào: {args.out}")
-    else:
-        print("⚠️ Không thu được dữ liệu (có thể bị anti-bot chặn).", file=sys.stderr)
+        company_urls = get_base_url_company(start_url)
+        if not company_urls:
+            print("⚠️ Không có URL công ty nào được tìm thấy. Kết thúc.", file=sys.stderr)
+            state["last_page"] = com + 1
+            save_checkpoint(ckpt_file, state)
+            return
 
+        company_urls = [u for u in company_urls if u not in done_urls]
+        print("=========================>")
+        print(f"🔎 Trang {com}: còn {len(company_urls)} công ty cần crawl (tổng trang có thể lớn hơn).")
 
+        batch_trains: List[pd.DataFrame] = []
+        batch_tests: List[pd.DataFrame] = []
+        futures = []
+
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for url in company_urls:
+                futures.append(ex.submit(process_company, url))
+
+            # Thu kết quả theo từng company, flush mỗi 'flush_every'
+            pbar = tqdm(as_completed(futures), total=len(futures), desc=f"Page {com}")
+            for fut in pbar:
+                tr_df, te_df, url = fut.result()
+                if tr_df is not None and not tr_df.empty:
+                    batch_trains.append(tr_df)
+                if te_df is not None and not te_df.empty:
+                    batch_tests.append(te_df)
+                done_urls.add(url)
+                # print('URL done:', url)
+                # print('TR_df :',len(tr_df), 'TE_df :', len(te_df))
+                # print('Batch trains:', len(batch_trains), 'Batch tests:', len(batch_tests))
+                # print('Flush every:', flush_every)
+                if len(batch_trains) >= flush_every or len(batch_tests) >= flush_every:
+                    if batch_trains:
+                        big_tr = pd.concat(batch_trains, ignore_index=True)
+                        atomic_write_csv(big_tr, out_path, mode="a", header=False)
+                        batch_trains.clear()
+                    if batch_tests:
+                        big_te = pd.concat(batch_tests, ignore_index=True)
+                        atomic_write_csv(big_te, test_out_path, mode="a", header=False)
+                        batch_tests.clear()
+
+                    state["done_urls"] = list(done_urls)
+                    state["last_page"] = com
+                    save_checkpoint(ckpt_file, state)
+
+        if batch_trains:
+            big_tr = pd.concat(batch_trains, ignore_index=True)
+            atomic_write_csv(big_tr, out_path, mode="a", header=False)
+        if batch_tests:
+            big_te = pd.concat(batch_tests, ignore_index=True)
+            atomic_write_csv(big_te, test_out_path, mode="a", header=False)
+
+        state["done_urls"] = list(done_urls)
+        state["last_page"] = com + 1
+        save_checkpoint(ckpt_file, state)
+
+    print(f"✅ Hoàn tất. Kết quả ở: {out_path} và {test_out_path}")
+    
 if __name__ == "__main__":
     main()

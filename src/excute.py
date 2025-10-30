@@ -1,31 +1,36 @@
 import pandas as pd
 from preprocessing_data import full_pipeline_preprocess_data
 from solution.content_base_for_item import ContentBaseBasicApproach
-# def load_and_preprocess_data(file_path: str) -> pd.DataFrame:
-#     df = full_pipeline_preprocess_data(file_path)
-#     print('Data loaded and preprocessed.', df.head())
-#     print('------------->')
-#     print(df.iloc[1])
-#     vector_feature = build_features_transform_for_item(df)
-#     print('Vector features built.')
-#     print(vector_feature)
-#     df = transform_for_item(df, vector_feature)
-#     print('-------------')
-#     return df
-# # print(load_and_preprocess_data("/home/quoc/crawl-company/out_2.csv"))
-
-# data = pd.read_csv("/home/quoc/crawl-company/out_2.csv")
-# outsource_company = "https://www.linkedin.com/company/instinctoolscompany/"
-# data = full_pipeline_preprocess_data("/home/quoc/crawl-company/out_2.csv")
-# vector_feature = build_features_transform_for_item(data)
-# profile, hist = build_outsource_profile(data, vector_feature, outsource_company)
-
-# print('PROFILE :', profile)
-# print('HIST :', hist)
+from benchmark_data import BenchmarkOutput
+def get_recommendations_output(df_test: pd.DataFrame, approach: ContentBaseBasicApproach,  top_k: int) -> pd.DataFrame:
+    results = pd.DataFrame()
+    set_url_outsource = set()
+    for idx, row in df_test.iterrows():
+        outsource_url_company = row['linkedin_company_outsource']
+        if outsource_url_company in set_url_outsource:
+            continue
+        set_url_outsource.add(outsource_url_company)
+        recommended_items = approach.recommend_items(outsource_url_company, top_k)
+        recommended_items['linkedin_company_outsource'] = outsource_url_company
+        results = pd.concat([results, recommended_items], ignore_index=True)
+    readable_results = results[['linkedin_company_outsource', 'reviewer_company', 'score']]
+    
+    return readable_results
 
 def main():
-    data_path = "/home/quoc/crawl-company/out_2.csv"
+    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/data_out.csv"
+    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/data_out_test.csv"
     
+    data_raw = full_pipeline_preprocess_data(data_path)
+    data_test = full_pipeline_preprocess_data(data_test_path)
+    print(data_raw.columns)
+    approach_content_base = ContentBaseBasicApproach(data_raw,data_test)
+    readable_results = get_recommendations_output(data_test, approach_content_base, top_k=10)
     
-    # data_raw = full_pipeline_preprocess_data(data_path)
-    # approach_content_base = ContentBaseBasicApproach(data_raw,)
+    benchmark = BenchmarkOutput(readable_results, data_test)
+    print('---------- Evaluation Results ----------')
+    summary, per_user = benchmark.evaluate_topk(k=10)
+    print(summary)
+    print('---------- Per User Results ----------')
+    print(per_user)
+main()

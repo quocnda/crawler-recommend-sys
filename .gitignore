@@ -1,2 +1,5 @@
 src/__pycache__
 venv/
+src/solution/__pycache__/
+checkpoints/
+data/

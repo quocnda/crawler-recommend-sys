@@ -109,6 +109,8 @@ def handle_project_size(df: pd.DataFrame) -> pd.DataFrame:
     df.drop(columns=['Project size'], inplace=True)
     return df
 
+def format_linkedin_url(url: str) -> str:
+    return url.strip().lower().rstrip('/')
 def reformat_name_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Định dạng lại tên các cột trong DataFrame theo chuẩn nhất định."""
     df = df.copy()
@@ -119,6 +121,7 @@ def reformat_name_columns(df: pd.DataFrame) -> pd.DataFrame:
         'Project description': 'project_description',
         'linkedin Company Outsource': 'linkedin_company_outsource'
     }, inplace=True)
+    df['linkedin_company_outsource'] = df['linkedin_company_outsource'].apply(format_linkedin_url)
     return df
 def full_pipeline_preprocess_data(file_path: str  = "/home/quoc/crawl-company/out_2.csv") -> pd.DataFrame:
     data = read_data(file_path)

@@ -86,16 +86,16 @@ class ContentBaseBasicApproach():
             profile = sparse.csr_matrix(profile)
         return profile, hist
 
-    def recommend_items(self, df_test: pd.DataFrame,
+    def recommend_items(self,
                         outsource_url: str, 
                         top_k:int = 5 ) ->  pd.DataFrame:
-        candidate_score = df_test.copy()        
+        candidate_score = self.df_test.copy()        
         profile, hist = self.build_outsource_profile(self.vector_feature, outsource_url)
         if profile is None:
             return pd.DataFrame(columns=["reviewer_company", "score"])
-        X_candidate = self.transform_for_item(df_test, self.vector_feature)
+        X_candidate = self.transform_for_item(self.df_test, self.vector_feature)
         sim = cosine_similarity(X_candidate, profile).ravel()
-        candidate_score.assign(score=sim)
+        candidate_score = candidate_score.assign(score=sim)
         agg = (
             candidate_score.groupby("reviewer_company", dropna=True)
                 .agg(
