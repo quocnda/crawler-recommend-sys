@@ -395,6 +395,8 @@ def process_company(url: str) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
 
         status, df = get_detail_information_with_retry(url_review)
         if status in ("TIME_OUT", "ERROR", "NO_REVIEW"):
+            train_df = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame()
+            test_df  = pd.concat(test_parts,  ignore_index=True) if test_parts  else pd.DataFrame()
             return train_df, test_df, url
         if df is not None and not df.empty and len(df) > 5:
             tr, te = train_test_split(df, test_size=0.3, shuffle=True, random_state=42)
@@ -424,7 +426,7 @@ def main() -> None:
     if not Path(test_out_path).exists():
         pd.DataFrame().to_csv(test_out_path, index=False)
 
-    for com in range(last_page, 3):
+    for com in range(last_page, 100):
         start_url = args.start_url
         # (Gợi ý) Có thể muốn set page luôn (không chỉ com==1) tùy site:
         if com > 1:

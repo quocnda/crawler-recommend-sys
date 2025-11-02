@@ -121,12 +121,19 @@ def reformat_name_columns(df: pd.DataFrame) -> pd.DataFrame:
         'Project description': 'project_description',
         'linkedin Company Outsource': 'linkedin_company_outsource'
     }, inplace=True)
+    df = df[~df['linkedin_company_outsource'].isna()]
     df['linkedin_company_outsource'] = df['linkedin_company_outsource'].apply(format_linkedin_url)
+    return df
+
+def handle_description_project(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df['Project description'] = ''
     return df
 def full_pipeline_preprocess_data(file_path: str  = "/home/quoc/crawl-company/out_2.csv") -> pd.DataFrame:
     data = read_data(file_path)
     extracted_column_data = extract_columns(data, COLUMNS_EXTRACT)
     extracted_column_data = handle_client_size(extracted_column_data)
     extracted_column_data = handle_project_size(extracted_column_data)
+    # extracted_column_data = handle_description_project(extracted_column_data)
     reformatted_data = reformat_name_columns(extracted_column_data)
     return reformatted_data
