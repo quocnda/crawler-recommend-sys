@@ -112,7 +112,12 @@ class ContentBaseBasicApproach:
         df: pd.DataFrame,
         df_test: pd.DataFrame,
         embedding_model: str = "text-embedding-3-large",
-        block_weights: Tuple[float, float, float, float] = (0.4, 0.4, 0.15, 0.05)  # (services, desc, cat, num)
+        block_weights: Tuple[float, float, float, float] = (0.4, 0.4, 0.15, 0.05),  # (services, desc, cat, num)
+        profile_mode: str = "weighted",       # "mean" | "weighted"
+        half_life_days: float = 180.0,        # recency half-life
+        conf_alpha_desc: float = 0.5,         # tầm ảnh hưởng độ dài mô tả
+        conf_alpha_budget: float = 0.5,       # tầm ảnh hưởng budget
+        shrinkage_lambda: float = 5.0, 
     ):
         """
         block_weights: trọng số cho (services_emb, description_emb, onehot_cat, numeric_scaled)
@@ -121,10 +126,18 @@ class ContentBaseBasicApproach:
         self.df_test = df_test.copy()
         self.embedding_model = embedding_model
         self.block_weights = block_weights
+        
+        self.profile_mode = profile_mode
+        self.conf_alpha_desc = conf_alpha_desc
+        self.conf_alpha_budget = conf_alpha_budget
+        self.shrinkage_lambda = shrinkage_lambda
         print('Build feature vectors for candidate items ...')
         self.vector_feature = self.build_features_transform_for_item(self.data_raw)
         print('Transform candidate items to feature matrix ...')
         self.X_candidate = self.transform_for_item(self.df_test, self.vector_feature)
+        self.global_mean_vec = self.X_candidate.mean(axis=0)
+        if not sparse.isspmatrix_csr(self.global_mean_vec):
+            self.global_mean_vec = sparse.csr_matrix(self.global_mean_vec)
 
     # ---- Utils ----
     def mean_value(self, a: float | None, b: float | None) -> float | None:
@@ -207,6 +220,38 @@ class ContentBaseBasicApproach:
         X = sparse.hstack([S, D, C, N], format="csr")
         return X
 
+    def _compute_hist_weights(self, hist: pd.DataFrame) -> np.ndarray:
+        """
+        Trọng số w = w_desc * w_budget (không có thời gian).
+        - w_desc: mô tả dài hơn -> tự tin hơn
+        - w_budget: budget_mid lớn hơn -> tự tin hơn
+        """
+        n = len(hist)
+        if n == 0:
+            return np.zeros((0,), dtype=np.float32)
+
+        # --- Độ dài mô tả: z-score rồi exp(alpha * z) ---
+        desc_len = hist.get("project_description", pd.Series([""] * n)).fillna("").astype(str).str.len()
+        desc_len = (desc_len - desc_len.mean()) / (desc_len.std(ddof=0) + 1e-6)
+        w_desc = np.exp(self.conf_alpha_desc * desc_len).astype(np.float32)
+
+        # --- Budget_mid (đã có từ _add_mid_columns): z-score rồi exp(alpha * z) ---
+        budget_mid = hist.get("project_budget_mid", pd.Series([0.0] * n)).fillna(0.0).astype(float)
+        if budget_mid.std(ddof=0) > 0:
+            z = (budget_mid - budget_mid.mean()) / (budget_mid.std(ddof=0) + 1e-6)
+        else:
+            z = pd.Series([0.0] * n)
+        w_budget = np.exp(self.conf_alpha_budget * z).astype(np.float32)
+
+        # --- Kết hợp ---
+        w = (w_desc * w_budget).astype(np.float32)
+
+        # Tránh all-zero / NaN rồi chuẩn hoá về tổng = 1 ngay tại chỗ build profile
+        if not np.isfinite(w).any() or w.sum() <= 0:
+            w = np.ones(n, dtype=np.float32)
+
+        return w
+
     # ---- Build outsource (user) profile: mean pooling lịch sử ----
     def build_outsource_profile(
         self,
@@ -219,10 +264,22 @@ class ContentBaseBasicApproach:
         if hist.empty:
             return None, hist
         X_hist = self.transform_for_item(hist, vector_feature)
-        profile = X_hist.mean(axis=0)  # mean pooling
-        if not isinstance(profile, sparse.csr_matrix):
-            profile = sparse.csr_matrix(profile)
-        return profile, hist
+        if self.profile_mode == "mean":
+            prof = X_hist.mean(axis=0)
+        else:
+            w = self._compute_hist_weights(hist)           # shape (n,)
+            w = w / (w.sum() + 1e-12)                      # chuẩn hoá
+            prof = sparse.csr_matrix(w[np.newaxis, :]).dot(X_hist)  # 1×d
+
+        if not sparse.isspmatrix_csr(prof):
+            prof = sparse.csr_matrix(prof)
+
+        # Shrinkage về global mean (ổn định khi lịch sử ít/thiên lệch)
+        lam = max(float(self.shrinkage_lambda), 0.0)
+        if lam > 0:
+            prof = (prof + lam * self.global_mean_vec) * (1.0 / (1.0 + lam))
+
+        return prof, hist
 
     # ---- Recommend ----
     def recommend_items(
