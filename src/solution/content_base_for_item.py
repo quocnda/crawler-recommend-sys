@@ -238,10 +238,10 @@ class ContentBaseBasicApproach:
 
         candidate_score = candidate_score.assign(score=sim)
         agg = (
-            candidate_score.groupby("reviewer_company", dropna=True)
+            candidate_score.groupby("industry", dropna=True)
             .agg(
                 score=("score", "max"),
-                industry=("industry", "first"),
+                # industry=("industry", "first"),
                 location=("location", "first"),
                 example_services=("services", "first"),
                 example_project=("project_description", "first"),

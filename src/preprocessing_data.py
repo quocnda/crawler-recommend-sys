@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 
-COLUMNS_EXTRACT = ['reviewer_company', 'Industry', 'Location', 'Client size'
+COLUMNS_EXTRACT = ['reviewer_company', 'Industry', 'Location', 'Client size','background'
                    , 'Services', 'Project size', 'Project description', 'linkedin Company Outsource']
 
 

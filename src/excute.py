@@ -19,16 +19,17 @@ def get_recommendations_output(df_test: pd.DataFrame, approach: ContentBaseBasic
         except Exception as e:
             print(f"Error processing row {idx} with URL {row['linkedin_company_outsource']}: {e}")
             continue
-    readable_results = results[['linkedin_company_outsource', 'reviewer_company', 'score']]
+    readable_results = results[['linkedin_company_outsource', 'industry', 'score']]
     
     return readable_results
 
 def main():
-    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/data_out.csv"
-    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/data_out_test.csv"
+    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample.csv"
+    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_test.csv"
     
     data_raw = full_pipeline_preprocess_data(data_path)
     data_test = full_pipeline_preprocess_data(data_test_path)
+    data_test['project_description'] = data_test['background']
     print('---------- Check points handle data base ----------')
     print(data_raw.columns)
     approach_content_base = ContentBaseBasicApproach(data_raw,data_test)
@@ -39,6 +40,8 @@ def main():
     print('---------- Evaluation Results ----------')
     summary, per_user = benchmark.evaluate_topk(k=10)
     print(summary)
+    summary.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/summary_with_rerank_1.csv', index=False)
     print('---------- Per User Results ----------')
     print(per_user)
+    per_user.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/per_user_with_rerank_1.csv', index=False)
 main()

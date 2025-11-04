@@ -4,7 +4,7 @@ import pandas as pd
 from math import log2
 from collections import OrderedDict
 USER_COL = "linkedin_company_outsource"
-ITEM_COL = "reviewer_company"
+ITEM_COL = "industry"
 class BenchmarkOutput():
     def __init__(self, data_output: pd.DataFrame, data_ground_truth: pd.DataFrame):
         self.data_output = data_output
