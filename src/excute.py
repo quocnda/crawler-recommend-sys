@@ -24,6 +24,8 @@ def get_recommendations_output(df_test: pd.DataFrame, approach: ContentBaseBasic
     return readable_results
 
 def main():
+    
+    print('BRANCH RUN THIS EXPERIMENT: with rerank 1: feat/content-base-openai')
     data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample.csv"
     data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_test.csv"
     
@@ -40,8 +42,8 @@ def main():
     print('---------- Evaluation Results ----------')
     summary, per_user = benchmark.evaluate_topk(k=10)
     print(summary)
-    summary.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/summary_with_rerank_1.csv', index=False)
+    summary.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/summary_content_base_openai.csv', index=False)
     print('---------- Per User Results ----------')
     print(per_user)
-    per_user.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/per_user_with_rerank_1.csv', index=False)
+    per_user.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/per_user_content_base_openai.csv', index=False)
 main()
