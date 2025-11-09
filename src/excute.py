@@ -323,11 +323,12 @@ def main_fusion(weight_content: float = 0.7, weight_collab: float = 0.3, top_k: 
 
     # Save
     out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
-    summary.to_csv(out_dir + f"summary_fusion_{int(weight_content*100)}_{int(weight_collab*100)}.csv", index=False)
-    per_user.to_csv(out_dir + f"per_user_fusion_{int(weight_content*100)}_{int(weight_collab*100)}.csv", index=False)
+    summary.to_csv(out_dir + f"summary_fusion_v2_{int(weight_content*100)}_{int(weight_collab*100)}.csv", index=False)
+    per_user.to_csv(out_dir + f"per_user_fusion_v2_{int(weight_content*100)}_{int(weight_collab*100)}.csv", index=False)
 
 
 if __name__ == "__main__":
+    print('BRANCH RUN THIS EXPERIMENT: with fusion of Content-Based and Collaborative Filtering: feat/content-base-openai-build-outsource-profile')
     # Run fusion by default (0.6 content, 0.4 collaborative)
-    # main_fusion(weight_content=0.6, weight_collab=0.4, top_k=10)
-    main()
+    main_fusion(weight_content=0.6, weight_collab=0.4, top_k=10)
+    # main()

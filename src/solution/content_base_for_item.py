@@ -14,7 +14,6 @@ from openai import OpenAI
 import numpy as np
 import pandas as pd
 from typing import List
-from sklearn.decomposition import TruncatedSVD
 
 class OpenAIEmbedder:
     """
@@ -76,6 +75,7 @@ class OpenAIEmbedder:
 
         out = []
         n = len(texts)
+        print(f'Embedding {n} texts using model {self.model} ...')
         for i in range(0, n, self.batch_size):
             batch = texts[i:i + self.batch_size]
             try:
@@ -112,16 +112,7 @@ class ContentBaseBasicApproach:
         df: pd.DataFrame,
         df_test: pd.DataFrame,
         embedding_model: str = "text-embedding-3-large",
-        block_weights: Tuple[float, float, float, float] = (0.4, 0.4, 0.15, 0.05),  # (services, desc, cat, num)
-        profile_mode: str = "mean",       # "mean" | "weighted"
-        half_life_days: float = 180.0,        # recency half-life
-        conf_alpha_desc: float = 0.5,         # tầm ảnh hưởng độ dài mô tả
-        conf_alpha_budget: float = 0.5,       # tầm ảnh hưởng budget
-        shrinkage_lambda: float = 5.0, 
-        
-        blockwise_l2: bool = True,          # L2-normalize từng block (row-wise)
-        svd_c_components: int | None = 128, # TruncatedSVD cho C (OneHot). None = tắt
-        svd_c_random_state: int = 42
+        block_weights: Tuple[float, float, float, float] = (0.4, 0.4, 0.15, 0.05)  # (services, desc, cat, num)
     ):
         """
         block_weights: trọng số cho (services_emb, description_emb, onehot_cat, numeric_scaled)
@@ -130,21 +121,10 @@ class ContentBaseBasicApproach:
         self.df_test = df_test.copy()
         self.embedding_model = embedding_model
         self.block_weights = block_weights
-        self.blockwise_l2 = blockwise_l2
-        self.svd_c_components = svd_c_components
-        self.svd_c_random_state = svd_c_random_state
-        
-        self.profile_mode = profile_mode
-        self.conf_alpha_desc = conf_alpha_desc
-        self.conf_alpha_budget = conf_alpha_budget
-        self.shrinkage_lambda = shrinkage_lambda
         print('Build feature vectors for candidate items ...')
         self.vector_feature = self.build_features_transform_for_item(self.data_raw)
         print('Transform candidate items to feature matrix ...')
         self.X_candidate = self.transform_for_item(self.df_test, self.vector_feature)
-        self.global_mean_vec = self.X_candidate.mean(axis=0)
-        if not sparse.isspmatrix_csr(self.global_mean_vec):
-            self.global_mean_vec = sparse.csr_matrix(self.global_mean_vec)
 
     # ---- Utils ----
     def mean_value(self, a: float | None, b: float | None) -> float | None:
@@ -167,127 +147,65 @@ class ContentBaseBasicApproach:
         )
         return df
 
-    def _l2_normalize_rows(self, X):
-    # Hỗ trợ cả csr_matrix và ndarray
-        if sparse.issparse(X):
-            norms = np.sqrt(X.multiply(X).sum(axis=1)).A1 + 1e-12
-            return X.multiply((1.0 / norms)[:, None])
-        else:
-            norms = np.linalg.norm(X, axis=1, keepdims=True) + 1e-12
-            return X / norms
     # ---- Fit feature transformers (replaces TF-IDF by OpenAI embeddings) ----
-    def build_features_transform_for_item(self, df: pd.DataFrame | None) -> Dict[str, Any]:
+    def build_features_transform_for_item(
+        self, df: pd.DataFrame | None
+    ) -> Dict[str, Any]:
         if df is None:
             df = self.data_raw
         df = self._add_mid_columns(df)
-
+        # Embeddings cho services & project_description
         embedder_services = OpenAIEmbedder(model=self.embedding_model, batch_size=1024, normalize=True).fit(
             df["services"].fillna("")
         )
         embedder_description = OpenAIEmbedder(model=self.embedding_model, batch_size=1024, normalize=True).fit(
             df["project_description"].fillna("")
         )
-
+        # OneHot cho categorical
         cat_cols = ["industry", "location"]
         ohe = OneHotEncoder(handle_unknown="ignore", sparse_output=True)
         _ = ohe.fit(df[cat_cols].fillna(""))
 
+        # Scaler cho numeric
         scaler = StandardScaler(with_mean=True)
         _ = scaler.fit(df[["client_size_mid", "project_budget_mid"]])
-
-        svd_c = None
-        if self.svd_c_components:
-            # Fit SVD trên ma trận C (sparse) để giảm chiều & khử nhiễu
-            C_fit = ohe.transform(df[cat_cols].fillna(""))
-            n_comp = min(self.svd_c_components, max(2, C_fit.shape[1]-1))
-            svd_c = TruncatedSVD(n_components=n_comp, random_state=self.svd_c_random_state)
-            svd_c.fit(C_fit)
 
         return {
             "embedder_services": embedder_services,
             "embedder_description": embedder_description,
             "ohe": ohe,
             "scaler": scaler,
-            "svd_c": svd_c,
             "cat_cols": cat_cols,
             "num_cols": ["client_size_mid", "project_budget_mid"],
         }
+
     # ---- Transform DF -> sparse feature matrix ----
     def transform_for_item(self, df: pd.DataFrame, vec: Dict[str, Any]) -> sparse.csr_matrix:
         df = self._add_mid_columns(df)
-
-        # --- Embedding blocks ---
+        # Embedding blocks (dense → sparse)
+        print('Transform services ...')
         services_emb = vec["embedder_services"].transform(df["services"].fillna(""))
-        desc_emb     = vec["embedder_description"].transform(df["project_description"].fillna(""))
+        print('Transform descriptions ...')
+        desc_emb = vec["embedder_description"].transform(df["project_description"].fillna(""))
 
-        S = sparse.csr_matrix(services_emb)  # đã L2 ở embedder nhưng vẫn normalize lại nếu muốn đồng nhất
+        S = sparse.csr_matrix(services_emb)
         D = sparse.csr_matrix(desc_emb)
+        # Categorical block (sparse)
+        C = vec["ohe"].transform(df[vec["cat_cols"]].fillna(""))
 
-        # --- Categorical ---
-        C_raw = vec["ohe"].transform(df[vec["cat_cols"]].fillna(""))
-        if vec["svd_c"] is not None:
-            # Giảm chiều → dense (numpy), rồi đưa về csr
-            C_dense = vec["svd_c"].transform(C_raw)        # shape (n, k)
-            C = sparse.csr_matrix(C_dense)
-        else:
-            C = C_raw  # giữ sparse one-hot
-
-        # --- Numeric ---
-        num_scaled = vec["scaler"].transform(df[vec["num_cols"]].fillna(0.0))  # dense
+        # Numeric block (dense → sparse)
+        num_scaled = vec["scaler"].transform(df[vec["num_cols"]].fillna(0.0))
         N = sparse.csr_matrix(num_scaled)
 
-        # --- Block-wise L2 normalize rồi nhân trọng số ---
+        # Optional: apply block weights before hstack (tuning chất lượng)
         wS, wD, wC, wN = self.block_weights
-        if self.blockwise_l2:
-            S = self._l2_normalize_rows(S)
-            D = self._l2_normalize_rows(D)
-            C = self._l2_normalize_rows(C)
-            N = self._l2_normalize_rows(N)
-
         if wS != 1.0: S = S.multiply(wS)
         if wD != 1.0: D = D.multiply(wD)
         if wC != 1.0: C = C.multiply(wC)
         if wN != 1.0: N = N.multiply(wN)
 
-        # --- Concat ---
         X = sparse.hstack([S, D, C, N], format="csr")
         return X
-
-
-    def _compute_hist_weights(self, hist: pd.DataFrame) -> np.ndarray:
-        """
-        Trọng số w = w_desc * w_budget (không có thời gian).
-        - w_desc: mô tả dài hơn -> tự tin hơn
-        - w_budget: budget_mid lớn hơn -> tự tin hơn
-        """
-        n = len(hist)
-        if n == 0:
-            print('EMPTY HIST')
-            return np.zeros((0,), dtype=np.float32)
-
-        # --- Độ dài mô tả: z-score rồi exp(alpha * z) ---
-        desc_len = hist.get("project_description", pd.Series([""] * n)).fillna("").astype(str).str.len()
-        desc_len = (desc_len - desc_len.mean()) / (desc_len.std(ddof=0) + 1e-6)
-        w_desc = np.exp(self.conf_alpha_desc * desc_len).astype(np.float32)
-
-        # --- Budget_mid (đã có từ _add_mid_columns): z-score rồi exp(alpha * z) ---
-        budget_mid = hist.get("project_budget_mid", pd.Series([0.0] * n)).fillna(0.0).astype(float)
-        if budget_mid.std(ddof=0) > 0:
-            z = (budget_mid - budget_mid.mean()) / (budget_mid.std(ddof=0) + 1e-6)
-        else:
-            z = pd.Series([0.0] * n)
-        w_budget = np.exp(self.conf_alpha_budget * z).astype(np.float32)
-
-        # --- Kết hợp ---
-        w = (w_desc * w_budget).astype(np.float32)
-        # Tránh all-zero / NaN rồi chuẩn hoá về tổng = 1 ngay tại chỗ build profile
-        if not np.isfinite(w).any() or w.sum() <= 0:
-            w = np.ones(n, dtype=np.float32)
-        
-        w = np.array(w, dtype=np.float32)
-        print('type w: ', type(w))
-        print('W :', w)
-        return w
 
     # ---- Build outsource (user) profile: mean pooling lịch sử ----
     def build_outsource_profile(
@@ -300,27 +218,11 @@ class ContentBaseBasicApproach:
         hist = df[mask].copy()
         if hist.empty:
             return None, hist
-
-        # (n_hist, d) — csr
         X_hist = self.transform_for_item(hist, vector_feature)
-
-        if self.profile_mode == "mean":
-            prof = X_hist.mean(axis=0)
-        else:
-            w = self._compute_hist_weights(hist)           # shape (n,)
-            w = w / (w.sum() + 1e-12)                      # chuẩn hoá
-            prof = sparse.csr_matrix(w[np.newaxis, :]).dot(X_hist)  # 1×d
-
-        if not sparse.isspmatrix_csr(prof):
-            prof = sparse.csr_matrix(prof)
-
-        # Shrinkage về global mean (ổn định khi lịch sử ít/thiên lệch)
-        lam = max(float(self.shrinkage_lambda), 0.0)
-        if lam > 0:
-            prof = (prof + lam * self.global_mean_vec) * (1.0 / (1.0 + lam))
-
-        return prof, hist
-
+        profile = X_hist.mean(axis=0)  # mean pooling
+        if not isinstance(profile, sparse.csr_matrix):
+            profile = sparse.csr_matrix(profile)
+        return profile, hist
 
     # ---- Recommend ----
     def recommend_items(
