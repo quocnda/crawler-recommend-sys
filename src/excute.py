@@ -194,7 +194,7 @@ def _fuse_for_user(
         rrf = _rrf_fuse(r_cb, r_cf, k=60)
         # có thể “blend” thêm z-score để giữ thông tin cường độ:
         for k in keys:
-            fused[k] = 0.7 * rrf.get(k, 0.0) + 0.3 * (w_cb * cbz.get(k, 0.0) + w_cf * cfz.get(k, 0.0))
+            fused[k] = 0.6 * rrf.get(k, 0.0) + 0.4 * (w_cb * cbz.get(k, 0.0) + w_cf * cfz.get(k, 0.0))
     else:
         # Linear score-fusion trên z-score
         for k in keys:
@@ -289,8 +289,7 @@ def main_fusion(weight_content: float = 0.7, weight_collab: float = 0.3, top_k: 
     print("Loading & preprocessing data ...")
     df_hist = full_pipeline_preprocess_data(data_path)
     df_test = full_pipeline_preprocess_data(data_test_path)
-    if "background" in df_test.columns and "project_description" not in df_test.columns:
-        df_test["project_description"] = df_test["background"]
+    df_test["project_description"] = df_test["background"]
 
     # Build content-based approach
     print("Building ContentBaseBasicApproach ...")
@@ -328,7 +327,7 @@ def main_fusion(weight_content: float = 0.7, weight_collab: float = 0.3, top_k: 
 
 
 if __name__ == "__main__":
-    print('BRANCH RUN THIS EXPERIMENT: with fusion of Content-Based and Collaborative Filtering: feat/content-base-openai-build-outsource-profile')
+    print('BRANCH RUN THIS EXPERIMENT: with fusion of Content-Based and Collaborative Filtering: feat/fusion-most-confidence with 0.6 0.4 in blend score')
     # Run fusion by default (0.6 content, 0.4 collaborative)
     main_fusion(weight_content=0.6, weight_collab=0.4, top_k=10)
     # main()

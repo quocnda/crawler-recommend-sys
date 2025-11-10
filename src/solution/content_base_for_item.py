@@ -75,7 +75,6 @@ class OpenAIEmbedder:
 
         out = []
         n = len(texts)
-        print(f'Embedding {n} texts using model {self.model} ...')
         for i in range(0, n, self.batch_size):
             batch = texts[i:i + self.batch_size]
             try:
@@ -112,7 +111,7 @@ class ContentBaseBasicApproach:
         df: pd.DataFrame,
         df_test: pd.DataFrame,
         embedding_model: str = "text-embedding-3-large",
-        block_weights: Tuple[float, float, float, float] = (0.4, 0.4, 0.15, 0.05)  # (services, desc, cat, num)
+        block_weights: Tuple[float, float, float, float] = (0.35, 0, 0.35, 0.3)  # (services, desc, cat, num)
     ):
         """
         block_weights: trọng số cho (services_emb, description_emb, onehot_cat, numeric_scaled)
@@ -158,9 +157,9 @@ class ContentBaseBasicApproach:
         embedder_services = OpenAIEmbedder(model=self.embedding_model, batch_size=1024, normalize=True).fit(
             df["services"].fillna("")
         )
-        embedder_description = OpenAIEmbedder(model=self.embedding_model, batch_size=1024, normalize=True).fit(
-            df["project_description"].fillna("")
-        )
+        # embedder_description = OpenAIEmbedder(model=self.embedding_model, batch_size=1024, normalize=True).fit(
+        #     df["project_description"].fillna("")
+        # )
         # OneHot cho categorical
         cat_cols = ["industry", "location"]
         ohe = OneHotEncoder(handle_unknown="ignore", sparse_output=True)
@@ -168,28 +167,26 @@ class ContentBaseBasicApproach:
 
         # Scaler cho numeric
         scaler = StandardScaler(with_mean=True)
-        _ = scaler.fit(df[["client_size_mid", "project_budget_mid"]])
+        _ = scaler.fit(df[["client_size_mid"]])
 
         return {
             "embedder_services": embedder_services,
-            "embedder_description": embedder_description,
+            # "embedder_description": embedder_description,
             "ohe": ohe,
             "scaler": scaler,
             "cat_cols": cat_cols,
-            "num_cols": ["client_size_mid", "project_budget_mid"],
+            "num_cols": ["client_size_mid"],
         }
 
     # ---- Transform DF -> sparse feature matrix ----
     def transform_for_item(self, df: pd.DataFrame, vec: Dict[str, Any]) -> sparse.csr_matrix:
         df = self._add_mid_columns(df)
         # Embedding blocks (dense → sparse)
-        print('Transform services ...')
         services_emb = vec["embedder_services"].transform(df["services"].fillna(""))
-        print('Transform descriptions ...')
-        desc_emb = vec["embedder_description"].transform(df["project_description"].fillna(""))
+        # desc_emb = vec["embedder_description"].transform(df["project_description"].fillna(""))
 
         S = sparse.csr_matrix(services_emb)
-        D = sparse.csr_matrix(desc_emb)
+        # D = sparse.csr_matrix(desc_emb)
         # Categorical block (sparse)
         C = vec["ohe"].transform(df[vec["cat_cols"]].fillna(""))
 
@@ -200,11 +197,11 @@ class ContentBaseBasicApproach:
         # Optional: apply block weights before hstack (tuning chất lượng)
         wS, wD, wC, wN = self.block_weights
         if wS != 1.0: S = S.multiply(wS)
-        if wD != 1.0: D = D.multiply(wD)
+        # if wD != 1.0: D = D.multiply(wD)
         if wC != 1.0: C = C.multiply(wC)
         if wN != 1.0: N = N.multiply(wN)
 
-        X = sparse.hstack([S, D, C, N], format="csr")
+        X = sparse.hstack([S, C, N], format="csr")
         return X
 
     # ---- Build outsource (user) profile: mean pooling lịch sử ----
