@@ -5,6 +5,9 @@ from solution.content_base_for_item import ContentBaseBasicApproach
 from benchmark_data import BenchmarkOutput
 from tqdm import tqdm
 from solution.collborative_for_item import CollaborativeIndustryRecommender
+from solution.advanced_reranker import integrate_advanced_reranking
+from solution.advanced_ensemble import integrate_advanced_ensemble
+from solution.graph_recommendations import integrate_graph_recommendations
 import numpy as np
 def get_recommendations_output(df_test: pd.DataFrame, approach: ContentBaseBasicApproach,  top_k: int) -> pd.DataFrame:
     results = pd.DataFrame()
@@ -326,8 +329,207 @@ def main_fusion(weight_content: float = 0.7, weight_collab: float = 0.3, top_k: 
     per_user.to_csv(out_dir + f"per_user_fusion_v2_{int(weight_content*100)}_{int(weight_collab*100)}.csv", index=False)
 
 
+def main_with_advanced_reranking(top_k: int = 10):
+    """Main function using advanced reranking strategy."""
+    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample.csv"
+    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_test.csv"
+
+    print("Loading & preprocessing data ...")
+    df_hist = full_pipeline_preprocess_data(data_path)
+    df_test = full_pipeline_preprocess_data(data_test_path)
+    df_test["project_description"] = df_test["background"]
+
+    # Build content-based approach
+    print("Building ContentBaseBasicApproach ...")
+    content_app = ContentBaseBasicApproach(df_hist, df_test)
+
+    # Fit collaborative model
+    print("Fitting CollaborativeIndustryRecommender ...")
+    collab = CollaborativeIndustryRecommender(
+        n_components=128,
+        min_user_interactions=1,
+        min_item_interactions=1,
+        use_tfidf_weighting=True,
+        random_state=42,
+    ).fit(df_history=df_hist, df_candidates=df_test)
+
+    # Apply advanced reranking
+    print("Applying advanced reranking strategy ...")
+    readable_results = integrate_advanced_reranking(
+        content_app, collab, df_test, df_hist, top_k=top_k
+    )
+
+    # Evaluate with existing BenchmarkOutput
+    print("Evaluating (Advanced Reranked) ...")
+    benchmark = BenchmarkOutput(readable_results, df_test)
+    summary, per_user = benchmark.evaluate_topk(k=top_k)
+
+    print("---------- Evaluation Results (Advanced Reranked) ----------")
+    print(summary)
+    print("---------- Per User Results (Advanced Reranked) ----------")
+    print(per_user)
+
+    # Save results
+    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
+    summary.to_csv(out_dir + "summary_with_advanced_rerank.csv", index=False)
+    per_user.to_csv(out_dir + "per_user_with_advanced_rerank.csv", index=False)
+
+
+def main_enhanced_embeddings_experiment(top_k: int = 10):
+    """Test enhanced embeddings approach."""
+    from solution.enhanced_embeddings import EnhancedContentBasedRecommender
+    
+    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample.csv"
+    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_test.csv"
+
+    print("Loading & preprocessing data ...")
+    df_hist = full_pipeline_preprocess_data(data_path)
+    df_test = full_pipeline_preprocess_data(data_test_path)
+    df_test["project_description"] = df_test["background"]
+
+    # Build enhanced content-based recommender
+    print("Building Enhanced Content-Based Recommender ...")
+    enhanced_recommender = EnhancedContentBasedRecommender(df_hist, df_test)
+
+    # Get recommendations for all test users
+    print("Generating enhanced recommendations ...")
+    results = []
+    seen_users = set()
+    
+    for _, row in df_test.iterrows():
+        user_id = row.get("linkedin_company_outsource")
+        if pd.isna(user_id) or user_id in seen_users:
+            continue
+        seen_users.add(user_id)
+        
+        try:
+            recs = enhanced_recommender.recommend_items(user_id, top_k=top_k)
+            for _, rec in recs.iterrows():
+                results.append({
+                    'linkedin_company_outsource': user_id,
+                    'industry': rec['industry'],
+                    'score': rec['score']
+                })
+        except Exception as e:
+            print(f"Error processing user {user_id}: {e}")
+            continue
+    
+    readable_results = pd.DataFrame(results)
+
+    # Evaluate
+    print("Evaluating (Enhanced Embeddings) ...")
+    benchmark = BenchmarkOutput(readable_results, df_test)
+    summary, per_user = benchmark.evaluate_topk(k=top_k)
+
+    print("---------- Evaluation Results (Enhanced Embeddings) ----------")
+    print(summary)
+
+    # Save results
+    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
+    summary.to_csv(out_dir + "summary_enhanced_embeddings.csv", index=False)
+    per_user.to_csv(out_dir + "per_user_enhanced_embeddings.csv", index=False)
+
+
+def main_advanced_ensemble_experiment(top_k: int = 10):
+    """Test advanced ensemble methods."""
+    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample.csv"
+    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_test.csv"
+
+    print("Loading & preprocessing data ...")
+    df_hist = full_pipeline_preprocess_data(data_path)
+    df_test = full_pipeline_preprocess_data(data_test_path)
+    # df_test["project_description"] = df_test["background"]
+
+    # Create ground truth for ensemble training
+    ground_truth = {}
+    for _, row in df_test.iterrows():
+        user_id = row.get("linkedin_company_outsource")
+        if pd.isna(user_id):
+            continue
+        if user_id not in ground_truth:
+            ground_truth[user_id] = []
+        ground_truth[user_id].append(row['industry'])
+
+    # Apply advanced ensemble
+    print("Applying advanced ensemble methods ...")
+    readable_results = integrate_advanced_ensemble(
+        df_hist, df_test, ground_truth, top_k=top_k
+    )
+
+    # Evaluate
+    print("Evaluating (Advanced Ensemble) ...")
+    benchmark = BenchmarkOutput(readable_results, df_test)
+    summary, per_user = benchmark.evaluate_topk(k=top_k)
+
+    print("---------- Evaluation Results (Advanced Ensemble) ----------")
+    print(summary)
+
+    # Save results
+    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
+    summary.to_csv(out_dir + "summary_advanced_ensemble.csv", index=False)
+    per_user.to_csv(out_dir + "per_user_advanced_ensemble.csv", index=False)
+
+
+def main_graph_experiment(top_k: int = 10):
+    """Test graph-based recommendations."""
+    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample.csv"
+    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_test.csv"
+
+    print("Loading & preprocessing data ...")
+    df_hist = full_pipeline_preprocess_data(data_path)
+    df_test = full_pipeline_preprocess_data(data_test_path)
+    df_test["project_description"] = df_test["background"]
+
+    # Apply graph-based recommendations
+    print("Applying graph-based recommendations ...")
+    readable_results = integrate_graph_recommendations(
+        df_hist, df_test, top_k=top_k
+    )
+
+    # Evaluate
+    print("Evaluating (Graph-Based) ...")
+    benchmark = BenchmarkOutput(readable_results, df_test)
+    summary, per_user = benchmark.evaluate_topk(k=top_k)
+
+    print("---------- Evaluation Results (Graph-Based) ----------")
+    print(summary)
+
+    # Save results
+    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
+    summary.to_csv(out_dir + "summary_graph_based.csv", index=False)
+    per_user.to_csv(out_dir + "per_user_graph_based.csv", index=False)
+
+
 if __name__ == "__main__":
-    print('BRANCH RUN THIS EXPERIMENT: with fusion of Content-Based and Collaborative Filtering: feat/fusion-most-confidence with 0.6 0.4 in blend score')
-    # Run fusion by default (0.6 content, 0.4 collaborative)
-    main_fusion(weight_content=0.6, weight_collab=0.4, top_k=10)
+    print('BRANCH RUN THIS EXPERIMENT: Advanced Recommendation Solutions')
+    
+    # Run fusion baseline (0.6 content, 0.4 collaborative)
+    # print('\n' + '='*80)
+    # print('RUNNING FUSION BASELINE')
+    # print('='*80)
+    # main_fusion(weight_content=0.6, weight_collab=0.4, top_k=10)
+    
+    # # Run advanced reranking experiment
+    # print('\n' + '='*80)
+    # print('RUNNING ADVANCED RERANKING EXPERIMENT')
+    # print('='*80)
+    # main_with_advanced_reranking(top_k=10)
+    
+    # Run enhanced embeddings experiment  
+    # print('\n' + '='*80)
+    # print('RUNNING ENHANCED EMBEDDINGS EXPERIMENT')
+    # print('='*80)
+    # main_enhanced_embeddings_experiment(top_k=10)
+    
+    # Run advanced ensemble experiment
+    print('\n' + '='*80)
+    print('RUNNING ADVANCED ENSEMBLE EXPERIMENT')
+    print('='*80)
+    main_advanced_ensemble_experiment(top_k=10)
+    
+    # Run graph-based experiment
+    # print('\n' + '='*80)
+    # print('RUNNING GRAPH-BASED EXPERIMENT')
+    # print('='*80)
+    # main_graph_experiment(top_k=10)
     # main()
