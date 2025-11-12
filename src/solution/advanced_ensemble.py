@@ -22,6 +22,14 @@ import lightgbm as lgb
 import warnings
 warnings.filterwarnings('ignore')
 
+# Import feature engineering
+try:
+    from solution.feature_engineering import AdvancedFeatureEngineer
+    FEATURE_ENGINEERING_AVAILABLE = True
+except ImportError:
+    FEATURE_ENGINEERING_AVAILABLE = False
+    print("Feature engineering not available. Using basic features.")
+
 try:
     import torch
     import torch.nn as nn
@@ -204,12 +212,18 @@ class NeuralEnsemble(nn.Module):
         n_models: int,
         user_feature_dim: int = 0,
         hidden_dim: int = 64,
-        dropout: float = 0.3
+        dropout: float = 0.3,
+        epochs: int = 100,
+        lr: float = 0.001
     ):
         super().__init__()
         
         self.n_models = n_models
         self.user_feature_dim = user_feature_dim
+        self.hidden_dim = hidden_dim
+        self.dropout = dropout
+        self.epochs = epochs
+        self.lr = lr
         
         # Input dimension: base predictions + user features + cross-model features
         input_dim = n_models + user_feature_dim + 3  # +3 for variance, spread, product
@@ -222,15 +236,15 @@ class NeuralEnsemble(nn.Module):
             nn.Softmax(dim=-1)
         )
         
-        # Main network
+        # Main network - Use LayerNorm instead of BatchNorm to avoid batch size issues
         self.network = nn.Sequential(
             nn.Linear(input_dim, hidden_dim * 2),
-            nn.BatchNorm1d(hidden_dim * 2),
+            nn.LayerNorm(hidden_dim * 2),
             nn.ReLU(),
             nn.Dropout(dropout),
             
             nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             
@@ -270,6 +284,14 @@ class NeuralEnsemble(nn.Module):
         combined_features = torch.cat(features, dim=1)
         
         return self.network(combined_features).squeeze()
+    
+    def predict(self, base_preds, user_features=None):
+        """
+        Safe prediction method that handles batch size = 1
+        """
+        self.eval()  # Ensure eval mode
+        with torch.no_grad():
+            return self.forward(base_preds, user_features)
 
 
 class AdvancedEnsembleRecommender:
@@ -294,15 +316,41 @@ class AdvancedEnsembleRecommender:
         self.stacking_ensemble = None
         self.neural_ensemble = None
         self.base_models = {}
-        self.user_feature_extractor = None
+        
+        # Initialize feature engineering
+        if FEATURE_ENGINEERING_AVAILABLE:
+            self.feature_engineer = AdvancedFeatureEngineer()
+            self.use_advanced_features = True
+        else:
+            self.feature_engineer = None
+            self.use_advanced_features = False
         
     def extract_user_features(self, user_history: pd.DataFrame, user_id: str) -> np.ndarray:
         """
         Extract comprehensive user features for ensemble.
         """
         if user_history.empty:
-            return np.zeros(10)
+            if self.use_advanced_features and self.feature_engineer:
+                return np.array(list(self.feature_engineer._get_default_user_features().values()))
+            else:
+                return np.zeros(10)
         
+        # Use advanced feature engineering if available
+        if self.use_advanced_features and self.feature_engineer:
+            try:
+                
+                feature_dict = self.feature_engineer.extract_user_features(user_id, user_history)
+                # Convert dict to array in consistent order
+                feature_keys = [
+                    'interaction_count',  'industry_diversity',
+                    'location_diversity', 'location_concentration'
+                ]
+                features = [feature_dict.get(key, 0.0) for key in feature_keys]
+                return np.array(features)
+            except Exception as e:
+                print(f"Advanced feature extraction failed: {e}, falling back to basic features")
+        
+        # Fallback to basic features
         features = []
         
         # Interaction statistics
@@ -324,12 +372,6 @@ class AdvancedEnsembleRecommender:
             features.append(np.log1p(avg_client_size) / 10.0)  # Log-normalized
         else:
             features.append(0.0)
-            
-        # if 'project_budget_mid' in user_history.columns:
-        #     avg_budget = user_history['project_budget_mid'].mean()
-        #     features.append(np.log1p(avg_budget) / 15.0)  # Log-normalized
-        # else:
-        #     features.append(0.0)
         
         # Geographic focus
         location_concentration = 1.0 - (len(user_history['location'].unique()) / max(n_interactions, 1))
@@ -344,6 +386,10 @@ class AdvancedEnsembleRecommender:
         # Engagement patterns
         features.append(min(n_interactions / 365.0, 1.0))  # Annual engagement rate
         features.append(0.7)  # Placeholder for consistency score
+        
+        # Padding to match advanced features length
+        while len(features) < 11:
+            features.append(0.0)
         
         return np.array(features)
     
@@ -419,6 +465,11 @@ class AdvancedEnsembleRecommender:
         """
         print("Fitting ensemble models...")
         
+        # Fit feature engineer if available
+        if self.use_advanced_features and self.feature_engineer:
+            print("Fitting advanced feature engineer...")
+            self.feature_engineer.fit(df_history)
+        
         # First fit base models
         self.fit_base_models(df_history, df_test)
         
@@ -446,7 +497,7 @@ class AdvancedEnsembleRecommender:
         # Fit stacking ensemble
         if 'stacking' in self.ensemble_methods:
             print("START STACKING")
-            self.stacking_ensemble = StackingEnsemble(meta_learner='lightgbm')
+            self.stacking_ensemble = StackingEnsemble(meta_learner='gradient_boosting')
             try:
                 self.stacking_ensemble.fit(
                     base_predictions_train, 
@@ -458,18 +509,18 @@ class AdvancedEnsembleRecommender:
                 self.stacking_ensemble = None
         
         # Fit neural ensemble
-        if 'neural' in self.ensemble_methods and TORCH_AVAILABLE:
-            print("START NEURAL ENSEMBLE")
-            try:
-                self._fit_neural_ensemble(
-                    base_predictions_train, 
-                    {u: gt for u, gt in ground_truth.items() if u in train_users},
-                    user_features_train,
-                    val_users, ground_truth, df_history
-                )
-            except Exception as e:
-                print(f"Neural ensemble fitting failed: {e}")
-                self.neural_ensemble = None
+        # if 'neural' in self.ensemble_methods and TORCH_AVAILABLE:
+        #     print("START NEURAL ENSEMBLE")
+        #     try:
+        #         self._fit_neural_ensemble(
+        #             base_predictions_train, 
+        #             {u: gt for u, gt in ground_truth.items() if u in train_users},
+        #             user_features_train,
+        #             val_users, ground_truth, df_history
+        #         )
+        #     except Exception as e:
+        #         print(f"Neural ensemble fitting failed: {e}")
+        #         self.neural_ensemble = None
         
         print("Ensemble fitting completed!")
     
@@ -534,7 +585,7 @@ class AdvancedEnsembleRecommender:
         
         # Initialize and train neural ensemble
         self.neural_ensemble = NeuralEnsemble(n_models, user_feat_dim, **self.neural_config)
-        optimizer = optim.Adam(self.neural_ensemble.parameters(), lr=self.neural_config['lr'])
+        optimizer = optim.Adam(self.neural_ensemble.parameters(), lr=self.neural_ensemble.lr)
         criterion = nn.BCELoss()
         
         # Training loop
@@ -542,7 +593,7 @@ class AdvancedEnsembleRecommender:
         n_batches = len(X_base) // batch_size + 1
         
         self.neural_ensemble.train()
-        for epoch in range(self.neural_config['epochs']):
+        for epoch in range(self.neural_ensemble.epochs):
             total_loss = 0
             
             for i in range(n_batches):
@@ -566,6 +617,10 @@ class AdvancedEnsembleRecommender:
             
             if epoch % 20 == 0:
                 print(f"Neural ensemble epoch {epoch}, loss: {total_loss/n_batches:.4f}")
+        
+        # Set model to eval mode after training
+        self.neural_ensemble.eval()
+        print("Neural ensemble training completed and set to eval mode!")
     
     def recommend_items(
         self,
@@ -603,23 +658,39 @@ class AdvancedEnsembleRecommender:
                 for model, preds in base_predictions.items()
             }
             
+            # Calculate compatibility bonus if feature engineering is available
+            compatibility_bonus = 0.0
+            if self.use_advanced_features and self.feature_engineer:
+                try:
+                    # Extract user features as dict
+                    user_feature_dict = self.feature_engineer.extract_user_features(user_id, user_history)
+                    # Extract item features
+                    item_feature_dict = self.feature_engineer.extract_item_features(item)
+                    # Calculate compatibility
+                    compatibility_bonus = self.feature_engineer.calculate_user_item_compatibility(
+                        user_feature_dict, item_feature_dict
+                    ) * 0.2  # Weight compatibility bonus
+                except Exception as e:
+                    print(f"Compatibility calculation error: {e}")
+            
             # Stacking ensemble
             if self.stacking_ensemble and self.stacking_ensemble.is_fitted:
                 try:
                     base_array = {model: np.array([score]) for model, score in base_scores.items()}
                     stacking_score = self.stacking_ensemble.predict(base_array, user_features.reshape(1, -1))
-                    scores.append(('stacking', stacking_score[0]))
+                    scores.append(('stacking', stacking_score[0] + compatibility_bonus))
                 except Exception as e:
                     print(f"Stacking prediction error: {e}")
             
             # Neural ensemble
             if self.neural_ensemble and TORCH_AVAILABLE:
                 try:
-                    with torch.no_grad():
-                        base_tensor = torch.FloatTensor([list(base_scores.values())])
-                        user_tensor = torch.FloatTensor([user_features])
-                        neural_score = self.neural_ensemble(base_tensor, user_tensor).item()
-                        scores.append(('neural', neural_score))
+                    print('NEURAL ENSEMBLE PREDICTION')
+                    print("=============")
+                    base_tensor = torch.FloatTensor([list(base_scores.values())])
+                    user_tensor = torch.FloatTensor([user_features])
+                    neural_score = self.neural_ensemble.predict(base_tensor, user_tensor).item()
+                    scores.append(('neural', neural_score))
                 except Exception as e:
                     print(f"Neural prediction error: {e}")
             
@@ -628,8 +699,7 @@ class AdvancedEnsembleRecommender:
                 # Dynamic weighting based on user characteristics
                 weights = self._get_dynamic_weights(user_features, base_scores)
                 weighted_score = sum(weights[model] * score for model, score in base_scores.items())
-                scores.append(('weighted', weighted_score))
-            
+                scores.append(('weighted', weighted_score + compatibility_bonus))
             # Combine ensemble methods
             if scores:
                 # Use the best performing method or average

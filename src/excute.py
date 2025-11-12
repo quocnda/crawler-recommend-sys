@@ -500,36 +500,186 @@ def main_graph_experiment(top_k: int = 10):
     per_user.to_csv(out_dir + "per_user_graph_based.csv", index=False)
 
 
+def main_multi_stage_experiment(top_k: int = 10):
+    """Test multi-stage pipeline for higher recall."""
+    from solution.multi_stage_pipeline import integrate_multi_stage_pipeline
+    
+    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample.csv"
+    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_test.csv"
+
+    print("Loading & preprocessing data ...")
+    df_hist = full_pipeline_preprocess_data(data_path)
+    df_test = full_pipeline_preprocess_data(data_test_path)
+    df_test["project_description"] = df_test["background"]
+
+    # Apply multi-stage pipeline
+    print("Applying multi-stage pipeline for higher recall ...")
+    readable_results = integrate_multi_stage_pipeline(
+        df_hist, df_test, top_k=top_k
+    )
+
+    # Evaluate
+    print("Evaluating (Multi-Stage Pipeline) ...")
+    benchmark = BenchmarkOutput(readable_results, df_test)
+    summary, per_user = benchmark.evaluate_topk(k=top_k)
+
+    print("---------- Evaluation Results (Multi-Stage Pipeline) ----------")
+    print(summary)
+
+    # Save results
+    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
+    summary.to_csv(out_dir + "summary_multi_stage_pipeline.csv", index=False)
+    per_user.to_csv(out_dir + "per_user_multi_stage_pipeline.csv", index=False)
+
+
+def main_enhanced_fusion_experiment(top_k: int = 10):
+    """Test enhanced fusion with better weight optimization."""
+    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample.csv"
+    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_test.csv"
+
+    print("Loading & preprocessing data ...")
+    df_hist = full_pipeline_preprocess_data(data_path)
+    df_test = full_pipeline_preprocess_data(data_test_path)
+    df_test["project_description"] = df_test["background"]
+
+    # Build content-based approach
+    print("Building ContentBaseBasicApproach ...")
+    content_app = ContentBaseBasicApproach(df_hist, df_test)
+
+    # Fit collaborative model
+    print("Fitting CollaborativeIndustryRecommender ...")
+    collab = CollaborativeIndustryRecommender(
+        n_components=150,  # Increased for better representation
+        min_user_interactions=1,
+        min_item_interactions=1,
+        use_tfidf_weighting=True,
+        random_state=42,
+    ).fit(df_history=df_hist, df_candidates=df_test)
+
+    # Test multiple fusion strategies
+    fusion_configs = [
+        {"weight_content": 0.8, "weight_collab": 0.2, "name": "content_heavy"},
+        {"weight_content": 0.6, "weight_collab": 0.4, "name": "balanced_content"},
+        {"weight_content": 0.5, "weight_collab": 0.5, "name": "equal_weight"},
+        {"weight_content": 0.4, "weight_collab": 0.6, "name": "collab_favored"},
+    ]
+    
+    best_recall = 0
+    best_config = None
+    best_results = None
+    
+    for config in fusion_configs:
+        print(f"Testing fusion config: {config['name']} ({config['weight_content']:.1f}-{config['weight_collab']:.1f})")
+        
+        readable_results = get_recommendations_output_fusion(
+            df_test, content_app, collab, 
+            top_k=top_k, 
+            weight_content=config['weight_content'], 
+            weight_collab=config['weight_collab'], 
+            fanout_mult=8,  # Increased fanout for higher recall
+            use_rrf=True,
+            per_user_zscore=True
+        )
+        
+        benchmark = BenchmarkOutput(readable_results, df_test)
+        summary, _ = benchmark.evaluate_topk(k=top_k)
+        
+        current_recall = summary['Recall@10'].iloc[0]
+        print(f"  Recall@10: {current_recall:.4f}")
+        
+        if current_recall > best_recall:
+            best_recall = current_recall
+            best_config = config
+            best_results = readable_results
+    
+    print(f"\n---------- Best Enhanced Fusion Results ----------")
+    print(f"Best config: {best_config['name']} with Recall@10: {best_recall:.4f}")
+    
+    # Final evaluation with best config
+    benchmark = BenchmarkOutput(best_results, df_test)
+    summary, per_user = benchmark.evaluate_topk(k=top_k)
+    print(summary)
+
+    # Save results
+    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
+    summary.to_csv(out_dir + f"summary_enhanced_fusion_{best_config['name']}.csv", index=False)
+    per_user.to_csv(out_dir + f"per_user_enhanced_fusion_{best_config['name']}.csv", index=False)
+
+
+def main_improved_ensemble_experiment(top_k: int = 10):
+    """Test improved ensemble with advanced feature engineering."""
+    try:
+        from solution.improved_ensemble import main_improved_ensemble_experiment as run_improved_ensemble
+        data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_test.csv"
+        data_train = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample.csv"
+        df_test = full_pipeline_preprocess_data(data_test_path)
+        df_train = full_pipeline_preprocess_data(data_train)
+        ground_truth = {}
+        for _, row in df_test.iterrows():
+            user_id = row.get("linkedin_company_outsource")
+            if pd.isna(user_id):
+                continue
+            if user_id not in ground_truth:
+                ground_truth[user_id] = []
+            ground_truth[user_id].append(row['industry'])
+
+        print("Running improved ensemble with advanced features ...")
+        readable_results = run_improved_ensemble(df_train, df_test, ground_truth, top_k=top_k)
+
+        # Load test data for evaluation
+        
+        
+        # Evaluate
+        print("Evaluating (Improved Ensemble) ...")
+        benchmark = BenchmarkOutput(readable_results, df_test)
+        summary, per_user = benchmark.evaluate_topk(k=top_k)
+
+        print("---------- Evaluation Results (Improved Ensemble) ----------")
+        print(summary)
+
+        # Save results
+        out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
+        summary.to_csv(out_dir + "summary_improved_ensemble.csv", index=False)
+        per_user.to_csv(out_dir + "per_user_improved_ensemble.csv", index=False)
+        
+        return summary
+        
+    except ImportError as e:
+        print(f"ERROR   ================== Could not import improved ensemble: {e}")
+        print("Running fallback advanced ensemble...")
+        return main_advanced_ensemble_experiment(top_k=top_k)
+
+
 if __name__ == "__main__":
-    print('BRANCH RUN THIS EXPERIMENT: Advanced Recommendation Solutions')
-    
-    # Run fusion baseline (0.6 content, 0.4 collaborative)
-    # print('\n' + '='*80)
-    # print('RUNNING FUSION BASELINE')
-    # print('='*80)
-    # main_fusion(weight_content=0.6, weight_collab=0.4, top_k=10)
-    
-    # # Run advanced reranking experiment
-    # print('\n' + '='*80)
-    # print('RUNNING ADVANCED RERANKING EXPERIMENT')
-    # print('='*80)
-    # main_with_advanced_reranking(top_k=10)
-    
-    # Run enhanced embeddings experiment  
-    # print('\n' + '='*80)
-    # print('RUNNING ENHANCED EMBEDDINGS EXPERIMENT')
-    # print('='*80)
-    # main_enhanced_embeddings_experiment(top_k=10)
-    
-    # Run advanced ensemble experiment
+    print('BRANCH RUN THIS EXPERIMENT: Enhanced Recall Optimization')
     print('\n' + '='*80)
-    print('RUNNING ADVANCED ENSEMBLE EXPERIMENT')
-    print('='*80)
-    main_advanced_ensemble_experiment(top_k=10)
     
-    # Run graph-based experiment
-    # print('\n' + '='*80)
-    # print('RUNNING GRAPH-BASED EXPERIMENT')
-    # print('='*80)
-    # main_graph_experiment(top_k=10)
-    # main()
+    # Run multiple experiments to find best recall approach
+    experiments = [
+        # ("Improved Ensemble with Features", main_improved_ensemble_experiment),
+        # ("Multi-Stage Pipeline", main_multi_stage_experiment),
+        # ("Enhanced Fusion", main_enhanced_fusion_experiment), 
+        ("Advanced Ensemble", main_advanced_ensemble_experiment)
+    ]
+    
+    results_summary = []
+    
+    for exp_name, exp_function in experiments:
+        print(f'RUNNING {exp_name.upper()} EXPERIMENT')
+        print('='*80)
+        
+        try:
+            exp_function(top_k=10)
+            results_summary.append(f"✅ {exp_name}: Completed successfully")
+        except Exception as e:
+            print(f"❌ Error in {exp_name}: {e}")
+            results_summary.append(f"❌ {exp_name}: Failed - {e}")
+        
+        print('\n')
+    
+    print('='*80)
+    print('EXPERIMENT SUMMARY')
+    print('='*80)
+    for result in results_summary:
+        print(result)
+    
