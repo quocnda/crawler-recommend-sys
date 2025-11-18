@@ -238,6 +238,19 @@ def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
+
+    website_company = soup.find('div', class_='profile-header__short-actions')
+    li_website = website_company.find('li', class_='profile-short-actions__item profile-short-actions__item--visit-website') if website_company else None
+    if li_website:
+        a_website = li_website.find('a')
+        if a_website and a_website.get('href'): 
+            website_url = a_website['href']
+            website_url = str(website_url) if website_url else None 
+        else:
+            website_url = None
+    else:
+        website_url = None 
+        
     contact_scope = soup.find("section", id="contact") or soup  # fallback
     link_social = extract_social_links(contact_scope)
 
@@ -258,6 +271,7 @@ def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
         if viewmore_data:
             background_el = viewmore_data.find("div", class_="profile-review__text with-border profile-review__extra-section")
             background_text = background_el.get_text(strip=True) if background_el else ""
+            background_text = str(background_text) if background_text else ""
         reviewer_data = extract_reviewer_info(e)
 
         row: dict = {}
@@ -265,6 +279,7 @@ def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
         row.update(reviewer_data or {})
         row["Project description"] = desc_el.get_text(strip=True) if desc_el else None
         row["background"] = background_text
+        row['website_url'] = website_url
         row.update(link_social or {})
         # print('ROW :', row)
         rows.append(row)
@@ -286,7 +301,8 @@ def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
         "Project size",
         "Project length",
         "Project description",
-        "background"
+        "background",
+        "website_url",
     ]
     cols = [c for c in preferred_cols if c in df.columns] + [
         c for c in df.columns if c not in preferred_cols

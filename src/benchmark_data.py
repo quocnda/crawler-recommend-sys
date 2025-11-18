@@ -5,8 +5,18 @@ from math import log2
 from collections import OrderedDict
 USER_COL = "linkedin_company_outsource"
 ITEM_COL = "industry"
+
 class BenchmarkOutput():
     def __init__(self, data_output: pd.DataFrame, data_ground_truth: pd.DataFrame):
+        """
+        Initialize BenchmarkOutput.
+        
+        Args:
+            data_output: Recommendations DataFrame 
+                         Must have columns: [user_col, item_col, score]
+            data_ground_truth: Ground truth DataFrame
+                              Must have columns: [user_col, item_col]
+        """
         self.data_output = data_output
         self.data_ground_truth = data_ground_truth
     

@@ -56,7 +56,7 @@ def handle_client_size(df: pd.DataFrame) -> pd.DataFrame:
     df['client_min'] = parsed.apply(lambda x: float(x[0]) if not pd.isna(x[0]) else np.nan)
     df['client_max'] = parsed.apply(lambda x: float(x[1]) if not pd.isna(x[1]) else np.nan)
     # Xóa cột gốc
-    df.drop(columns=['Client size'], inplace=True)
+    # df.drop(columns=['Client size'], inplace=True)
     return df
 
 
