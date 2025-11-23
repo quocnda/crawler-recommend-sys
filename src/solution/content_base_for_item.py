@@ -13,8 +13,8 @@ load_dotenv()
 from openai import OpenAI
 import numpy as np
 import pandas as pd
-from typing import List
-
+from typing import List,Literal
+from sklearn.model_selection import train_test_split
 class OpenAIEmbedder:
     """
     - fit(texts): no-op (stateless)
@@ -116,7 +116,9 @@ class ContentBaseBasicApproach:
         """
         block_weights: trọng số cho (services_emb, description_emb, onehot_cat, numeric_scaled)
         """
-        self.data_raw = df.copy()
+        data_train, data_val = train_test_split(df, test_size=0.2, random_state=42)
+        self.data_raw = data_train.copy()
+        self.data_val = data_val.copy()
         self.df_test = df_test.copy()
         self.embedding_model = embedding_model
         self.block_weights = block_weights
@@ -225,7 +227,8 @@ class ContentBaseBasicApproach:
     def recommend_items(
         self,
         outsource_url: str,
-        top_k: int = 5
+        top_k: int = 5,
+        mode: Literal['val', 'test'] = 'test'
     ) -> pd.DataFrame:
         candidate_score = self.df_test.copy()
         profile, hist = self.build_outsource_profile(self.vector_feature, outsource_url)

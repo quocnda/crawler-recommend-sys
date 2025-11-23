@@ -38,7 +38,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from curl_cffi import requests as creq
 import fcntl
 import shutil, os
-
+from selenium_crawl import SeleniumCrawler
 
 # =========================
 # Config mặc định
@@ -67,7 +67,7 @@ SESS = creq.Session(
     headers=COMMON_HEADERS,
     timeout=30,
 )
-
+DICT_DATA_OUTSOURCE_COMPANY: dict[str , dict[str,str]] = {}
 
 # =========================
 # HTTP helper
@@ -226,6 +226,21 @@ def get_base_url_company(start_url: str) -> List[str]:
             ans.append(urljoin("https://clutch.co", a["href"]))
     return ans
 
+def extract_services_company(soup: BeautifulSoup, company_url: str) -> List[str]:
+    """
+    Cố gắng lấy danh sách services bằng parse tĩnh.
+    Nếu không thấy gì (có thể do cần JS), fallback dùng SeleniumCrawler.
+    (Tạo instance tạm thời mỗi lần fallback – thread-safe vì không chia sẻ driver.)
+    """
+    services: List[str] = []
+    # Fallback Selenium khi parse tĩnh không có dữ liệu
+    try:
+        crawler = SeleniumCrawler()
+        data = crawler.get_industries_and_services(company_url)
+        services = data.get("services", []) or []
+        return services
+    except Exception:
+        return services  # có thể rỗng
 
 def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
     """
@@ -237,20 +252,29 @@ def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
         return "TIME_OUT",pd.DataFrame()
 
     soup = BeautifulSoup(resp.text, "html.parser")
-
-
-    website_company = soup.find('div', class_='profile-header__short-actions')
-    li_website = website_company.find('li', class_='profile-short-actions__item profile-short-actions__item--visit-website') if website_company else None
-    if li_website:
-        a_website = li_website.find('a')
-        if a_website and a_website.get('href'): 
-            website_url = a_website['href']
-            website_url = str(website_url) if website_url else None 
-        else:
-            website_url = None
-    else:
-        website_url = None 
+    prefix_company_url = company_url.split('?page=')[0]
+    if prefix_company_url not in DICT_DATA_OUTSOURCE_COMPANY:
+        DICT_DATA_OUTSOURCE_COMPANY[prefix_company_url] = {}
+        description_company = soup.find('section', class_ = 'profile-summary profile-summary__section profile-section')
+        section_services = extract_services_company(soup, company_url)
+        website_company = soup.find('div', class_='profile-header__short-actions')
         
+        li_website = website_company.find('li', class_='profile-short-actions__item profile-short-actions__item--visit-website') if website_company else None
+        if li_website:
+            a_website = li_website.find('a')
+            if a_website and a_website.get('href'): 
+                website_url = a_website['href']
+                website_url = str(website_url) if website_url else None 
+            else:
+                website_url = None
+        else:
+            website_url = None 
+
+        DICT_DATA_OUTSOURCE_COMPANY[prefix_company_url] = {'description': description_company.get_text(strip=True) if description_company else None, 'services': section_services, 'website': website_url}
+    else:
+        description_company = DICT_DATA_OUTSOURCE_COMPANY[prefix_company_url].get('description', None)
+        section_services = DICT_DATA_OUTSOURCE_COMPANY[prefix_company_url].get('services', [])
+        website_url = DICT_DATA_OUTSOURCE_COMPANY[prefix_company_url].get('website', None) 
     contact_scope = soup.find("section", id="contact") or soup  # fallback
     link_social = extract_social_links(contact_scope)
 
@@ -280,6 +304,8 @@ def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
         row["Project description"] = desc_el.get_text(strip=True) if desc_el else None
         row["background"] = background_text
         row['website_url'] = website_url
+        row['description_company_outsource'] = description_company.get_text(strip=True) if description_company else None
+        row['services_company_outsource'] = ', '.join(section_services) if section_services else None
         row.update(link_social or {})
         # print('ROW :', row)
         rows.append(row)
@@ -303,6 +329,8 @@ def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
         "Project description",
         "background",
         "website_url",
+        "description_company_outsource",
+        "services_company_outsource"
     ]
     cols = [c for c in preferred_cols if c in df.columns] + [
         c for c in df.columns if c not in preferred_cols
