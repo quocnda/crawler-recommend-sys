@@ -111,7 +111,7 @@ class ContentBaseBasicApproach:
         df: pd.DataFrame,
         df_test: pd.DataFrame,
         embedding_model: str = "text-embedding-3-large",
-        block_weights: Tuple[float, float, float, float] = (0.35, 0, 0.35, 0.3)  # (services, desc, cat, num)
+        block_weights: Tuple[float, float, float, float] = (0.3, 0.2, 0.3, 0.2)  # (services, desc, cat, num)
     ):
         """
         block_weights: trọng số cho (services_emb, description_emb, onehot_cat, numeric_scaled)
@@ -125,8 +125,8 @@ class ContentBaseBasicApproach:
         print('Build feature vectors for candidate items ...')
         self.vector_feature = self.build_features_transform_for_item(self.data_raw)
         print('Transform candidate items to feature matrix ...')
-        self.X_candidate = self.transform_for_item(self.df_test, self.vector_feature)
-
+        self.X_test_candidate = self.transform_for_item(self.df_test, self.vector_feature)
+        self.X_val_candidate = self.transform_for_item(self.data_val, self.vector_feature)
     # ---- Utils ----
     def mean_value(self, a: float | None, b: float | None) -> float | None:
         a = np.nan if a is None else a
@@ -159,10 +159,10 @@ class ContentBaseBasicApproach:
         embedder_services = OpenAIEmbedder(model=self.embedding_model, batch_size=1024, normalize=True).fit(
             df["services"].fillna("")
         )
-        # embedder_description = OpenAIEmbedder(model=self.embedding_model, batch_size=1024, normalize=True).fit(
-        #     df["project_description"].fillna("")
-        # )
-        # OneHot cho categorical
+        embedder_background = OpenAIEmbedder(model=self.embedding_model, batch_size=1024, normalize=True).fit(
+            df["background"].fillna("")
+        )
+       
         cat_cols = ["industry", "location"]
         ohe = OneHotEncoder(handle_unknown="ignore", sparse_output=True)
         _ = ohe.fit(df[cat_cols].fillna(""))
@@ -173,7 +173,7 @@ class ContentBaseBasicApproach:
 
         return {
             "embedder_services": embedder_services,
-            # "embedder_description": embedder_description,
+            "embedder_background": embedder_background,
             "ohe": ohe,
             "scaler": scaler,
             "cat_cols": cat_cols,
@@ -185,10 +185,10 @@ class ContentBaseBasicApproach:
         df = self._add_mid_columns(df)
         # Embedding blocks (dense → sparse)
         services_emb = vec["embedder_services"].transform(df["services"].fillna(""))
-        # desc_emb = vec["embedder_description"].transform(df["project_description"].fillna(""))
+        background_emb = vec["embedder_background"].transform(df["background"].fillna(""))
 
         S = sparse.csr_matrix(services_emb)
-        # D = sparse.csr_matrix(desc_emb)
+        D = sparse.csr_matrix(background_emb)
         # Categorical block (sparse)
         C = vec["ohe"].transform(df[vec["cat_cols"]].fillna(""))
 
@@ -199,11 +199,11 @@ class ContentBaseBasicApproach:
         # Optional: apply block weights before hstack (tuning chất lượng)
         wS, wD, wC, wN = self.block_weights
         if wS != 1.0: S = S.multiply(wS)
-        # if wD != 1.0: D = D.multiply(wD)
+        if wD != 1.0: D = D.multiply(wD)
         if wC != 1.0: C = C.multiply(wC)
         if wN != 1.0: N = N.multiply(wN)
 
-        X = sparse.hstack([S, C, N], format="csr")
+        X = sparse.hstack([S,D, C, N], format="csr")
         return X
 
     # ---- Build outsource (user) profile: mean pooling lịch sử ----
@@ -230,11 +230,16 @@ class ContentBaseBasicApproach:
         top_k: int = 5,
         mode: Literal['val', 'test'] = 'test'
     ) -> pd.DataFrame:
-        candidate_score = self.df_test.copy()
+        if mode == 'val':
+            data_candidate = self.X_val_candidate
+            candidate_score = self.data_val.copy()
+        else:
+            data_candidate = self.X_test_candidate
+            candidate_score = self.df_test.copy()
         profile, hist = self.build_outsource_profile(self.vector_feature, outsource_url)
         if profile is None:
             return pd.DataFrame(columns=["reviewer_company", "score"])
-        sim = cosine_similarity(self.X_candidate, profile).ravel()
+        sim = cosine_similarity(data_candidate, profile).ravel()
 
         candidate_score = candidate_score.assign(score=sim)
         agg = (

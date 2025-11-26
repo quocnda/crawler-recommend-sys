@@ -12,7 +12,7 @@ This module implements sophisticated ensemble techniques to combine multiple rec
 from __future__ import annotations
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Literal, Optional, Tuple, Any
 from sklearn.model_selection import KFold
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.linear_model import Ridge, ElasticNet
@@ -431,7 +431,7 @@ class AdvancedEnsembleRecommender:
         
         print(f"Successfully fitted {len(self.base_models)} base models")
     
-    def get_base_predictions(self, user_id: str, top_k: int = 20) -> Dict[str, Dict[str, float]]:
+    def get_base_predictions(self, user_id: str, top_k: int = 20, mode: Literal['val','test'] = 'test') -> Dict[str, Dict[str, float]]:
         """
         Get predictions from all base models for a user.
         """
@@ -441,13 +441,15 @@ class AdvancedEnsembleRecommender:
                 if model_name == 'collaborative':
                     recs = model.recommend_items(user_id, top_k=top_k)
                 else:
-                    recs = model.recommend_items(user_id, top_k=top_k)
+                    recs = model.recommend_items(user_id, top_k=top_k, mode=mode)
                 
                 # Convert to dict format
                 pred_dict = dict(zip(recs['industry'], recs['score']))
                 predictions[model_name] = pred_dict
                 
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 print(f"Error getting predictions from {model_name}: {e}")
                 predictions[model_name] = {}
         
@@ -489,7 +491,7 @@ class AdvancedEnsembleRecommender:
             user_history = df_history[df_history['linkedin_company_outsource'] == user_id]
             
             # Get base predictions
-            base_preds = self.get_base_predictions(user_id, top_k=30)
+            base_preds = self.get_base_predictions(user_id, top_k=30, mode='val')
             if any(base_preds.values()):  # Only include if we have predictions
                 base_predictions_train[user_id] = base_preds
                 user_features_train[user_id] = self.extract_user_features(user_history, user_id)

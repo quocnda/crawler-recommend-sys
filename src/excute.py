@@ -1,13 +1,8 @@
 from typing import Dict, List, Tuple
 import pandas as pd
 from preprocessing_data import full_pipeline_preprocess_data
-from solution.content_base_for_item import ContentBaseBasicApproach
 from benchmark_data import BenchmarkOutput
-from tqdm import tqdm
-from solution.collborative_for_item import CollaborativeIndustryRecommender
-from solution.advanced_reranker import integrate_advanced_reranking
 from solution.advanced_ensemble import integrate_advanced_ensemble
-from solution.graph_recommendations import integrate_graph_recommendations
 import numpy as np
 
 def main_advanced_ensemble_experiment(top_k: int = 10):
@@ -18,9 +13,7 @@ def main_advanced_ensemble_experiment(top_k: int = 10):
     print("Loading & preprocessing data ...")
     df_hist = full_pipeline_preprocess_data(data_path)
     df_test = full_pipeline_preprocess_data(data_test_path)
-    # df_test["project_description"] = df_test["background"]
 
-    # Create ground truth for ensemble training
     ground_truth = {}
     for _, row in df_test.iterrows():
         user_id = row.get("linkedin_company_outsource")
@@ -54,11 +47,7 @@ if __name__ == "__main__":
     print('BRANCH RUN THIS EXPERIMENT: Enhanced Recall Optimization')
     print('\n' + '='*80)
     
-    # Run multiple experiments to find best recall approach
     experiments = [
-        # ("Improved Ensemble with Features", main_improved_ensemble_experiment),
-        # ("Multi-Stage Pipeline", main_multi_stage_experiment),
-        # ("Enhanced Fusion", main_enhanced_fusion_experiment), 
         ("Advanced Ensemble", main_advanced_ensemble_experiment)
     ]
     

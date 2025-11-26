@@ -3,22 +3,36 @@ from __future__ import annotations
 import pandas as pd
 from math import log2
 from collections import OrderedDict
+from typing import Optional, Callable
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
 USER_COL = "linkedin_company_outsource"
 ITEM_COL = "industry"
+TRIPLET_COL = "triplet"
 
 class BenchmarkOutput():
-    def __init__(self, data_output: pd.DataFrame, data_ground_truth: pd.DataFrame):
+    def __init__(
+        self, 
+        data_output: pd.DataFrame, 
+        data_ground_truth: pd.DataFrame,
+        similarity_fn: Optional[Callable[[str, str], float]] = None
+    ):
         """
         Initialize BenchmarkOutput.
         
         Args:
             data_output: Recommendations DataFrame 
-                         Must have columns: [user_col, item_col, score]
+                         Must have columns: [user_col, item_col/triplet_col, score]
             data_ground_truth: Ground truth DataFrame
-                              Must have columns: [user_col, item_col]
+                              Must have columns: [user_col, item_col/triplet_col]
+            similarity_fn: Optional function to calculate similarity between items/triplets
+                          Used for partial match scoring. Should return float in [0, 1]
         """
         self.data_output = data_output
         self.data_ground_truth = data_ground_truth
+        self.similarity_fn = similarity_fn
     
     def _unique_preserve(self,seq):
         seen = set()
@@ -58,10 +72,29 @@ class BenchmarkOutput():
         return dcg / idcg
 
     def evaluate_topk(self,
-        k: int = 5,
+        k: int = 10,
         user_col: str = USER_COL,
         item_col: str = ITEM_COL,
+        use_partial_match: bool = False,
+        partial_match_threshold: float = 0.5
     ):
+        """
+        Evaluate recommendations at top-k.
+        
+        Args:
+            k: Top-k for evaluation
+            user_col: Column name for user identifier
+            item_col: Column name for item/triplet identifier
+            use_partial_match: If True, use similarity_fn for partial matches
+            partial_match_threshold: Minimum similarity for partial match
+        
+        Returns:
+            (summary_df, per_user_df)
+        """
+        # Auto-detect if using triplets
+        if TRIPLET_COL in self.data_output.columns:
+            item_col = TRIPLET_COL
+        
         # Gom list đề xuất cho mỗi user (giữ thứ tự xuất hiện, loại trùng)
         data_output = self.data_output
         data_ground_truth = self.data_ground_truth
@@ -81,14 +114,22 @@ class BenchmarkOutput():
             .to_dict()
         )
         users = sorted(set(pred_lists.keys()) | set(gt_sets.keys()))
-
+        print()
         rows = []
         for u in users:
             preds = pred_lists.get(u, [])
             gts = gt_sets.get(u, set())
 
             preds_k = preds[:k]
-            hits = [1 if p in gts else 0 for p in preds_k]
+            
+            if use_partial_match and self.similarity_fn is not None:
+                # Use partial matching with similarity function
+                hits = self._compute_partial_hits(
+                    preds_k, gts, partial_match_threshold
+                )
+            else:
+                # Exact matching
+                hits = [1 if p in gts else 0 for p in preds_k]
 
             num_true = len(gts)
             precision = self._precision_at_k(hits, k)
@@ -116,6 +157,7 @@ class BenchmarkOutput():
         # Trung bình macro
         summary = {
             "users_evaluated": len(per_user),
+            "match_type": "partial" if use_partial_match else "exact",
             f"Precision@{k}": per_user[f"Precision@{k}"].mean() if len(per_user) else 0.0,
             f"Recall@{k}": per_user[f"Recall@{k}"].mean() if len(per_user) else 0.0,
             f"F1@{k}": per_user[f"F1@{k}"].mean() if len(per_user) else 0.0,
@@ -127,3 +169,33 @@ class BenchmarkOutput():
         }
         summary_df = pd.DataFrame([summary])
         return summary_df, per_user
+    
+    def _compute_partial_hits(
+        self,
+        predictions: list,
+        ground_truth: set,
+        threshold: float
+    ) -> list:
+        """
+        Compute hits using partial matching with similarity function.
+        
+        For each prediction, find the best matching ground truth item.
+        If similarity >= threshold, count as a hit with weighted score.
+        """
+        hits = []
+        
+        for pred in predictions:
+            # Find best match in ground truth
+            max_similarity = 0.0
+            
+            for gt_item in ground_truth:
+                similarity = self.similarity_fn(pred, gt_item)
+                max_similarity = max(max_similarity, similarity)
+            
+            # If similarity meets threshold, count as weighted hit
+            if max_similarity >= threshold:
+                hits.append(max_similarity)  # Weighted by similarity
+            else:
+                hits.append(0.0)
+        
+        return hits

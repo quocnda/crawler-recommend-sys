@@ -3,7 +3,7 @@ Deep Learning Embedding Enhancement
 ==================================
 
 This module implements advanced embedding strategies to improve content representation:
-1. Sentence Transformers for better semantic understanding
+1. OpenAI Embeddings or Sentence Transformers for better semantic understanding
 2. Multi-modal embeddings (text + categorical features)
 3. Domain-specific embedding fine-tuning
 4. Hierarchical embeddings for industry categories
@@ -12,21 +12,34 @@ This module implements advanced embedding strategies to improve content represen
 from __future__ import annotations
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 import torch
-from sentence_transformers import SentenceTransformer
 from sklearn.preprocessing import StandardScaler
 from scipy import sparse
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 import warnings
+from sklearn.model_selection import train_test_split
 warnings.filterwarnings('ignore')
+
+# Import embedder với fallback
+try:
+    from solution.openai_embedder import HybridEmbedder, get_embedder
+    OPENAI_EMBEDDER_AVAILABLE = True
+except ImportError:
+    OPENAI_EMBEDDER_AVAILABLE = False
+
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
 
 
 class EnhancedEmbedder:
     """
     Advanced embedding system that combines multiple embedding techniques:
-    1. Sentence Transformers for semantic text understanding
+    1. OpenAI Embeddings or Sentence Transformers for semantic text understanding
     2. Categorical embeddings for structured data
     3. Hierarchical industry embeddings
     4. Cross-modal fusion
@@ -38,17 +51,40 @@ class EnhancedEmbedder:
         embedding_dim: int = 384,
         use_industry_hierarchy: bool = True,
         fusion_method: str = 'concat',  # 'concat', 'weighted_sum', 'attention'
-        device: str = None
+        device: str = None,
+        use_openai: bool = True,  # NEW: Use OpenAI embeddings
+        openai_model: str = 'text-embedding-3-small'  # NEW: OpenAI model
     ):
         self.sentence_model_name = sentence_model_name
         self.embedding_dim = embedding_dim
         self.use_industry_hierarchy = use_industry_hierarchy
         self.fusion_method = fusion_method
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+        self.use_openai = use_openai
         
-        # Initialize models
-        self.sentence_model = SentenceTransformer(sentence_model_name)
-        self.sentence_model.to(self.device)
+        # Initialize embedder (OpenAI or SentenceTransformers)
+        self.sentence_model = None
+        
+        if use_openai and OPENAI_EMBEDDER_AVAILABLE:
+            try:
+                self.sentence_model = HybridEmbedder(
+                    use_openai=True,
+                    openai_model=openai_model,
+                    sentence_model=sentence_model_name
+                )
+                print(f"EnhancedEmbedder using OpenAI: {openai_model}")
+            except Exception as e:
+                print(f"Warning: Could not initialize OpenAI embedder: {e}")
+                self.sentence_model = None
+        
+        if self.sentence_model is None and SENTENCE_TRANSFORMERS_AVAILABLE:
+            try:
+                self.sentence_model = SentenceTransformer(sentence_model_name)
+                self.sentence_model.to(self.device)
+                print(f"EnhancedEmbedder using SentenceTransformers: {sentence_model_name}")
+            except Exception as e:
+                print(f"Warning: Could not load sentence transformer: {e}")
+                raise ValueError("No embedding model available")
         
         # Learnable components
         self.industry_embeddings = {}
@@ -100,7 +136,7 @@ class EnhancedEmbedder:
             # Combine multiple text fields intelligently
             services = str(row.get('services', '')).strip()
             # description = str(row.get('project_description', '')).strip()
-            # background = str(row.get('background', '')).strip()
+            background = str(row.get('background', '')).strip()
             
             # Create rich text representation
             text_parts = []
@@ -113,9 +149,9 @@ class EnhancedEmbedder:
             #     desc = description[:500] + "..." if len(description) > 500 else description
             #     text_parts.append(f"Project: {desc}")
                 
-            # if background and background.lower() != 'nan':
-            #     bg = background[:300] + "..." if len(background) > 300 else background
-            #     text_parts.append(f"Background: {bg}")
+            if background and background.lower() != 'nan':
+                bg = background[:1000] + "..." if len(background) > 1000 else background
+                text_parts.append(f"Background: {bg}")
                 
             combined_text = " | ".join(text_parts) if text_parts else "No description available"
             combined_texts.append(combined_text)
@@ -141,7 +177,7 @@ class EnhancedEmbedder:
             industries = df['industry'].fillna('Unknown').values
             if self.industry_embeddings:
                 industry_vecs = np.array([
-                    self.industry_embeddings.get(ind, {}).get('embedding', np.zeros(32)) if ind in self.industry_embeddings else np.zeros(32)
+                    self.industry_embeddings.get(ind, {}).get('embedding', np.zeros(384)) if ind in self.industry_embeddings else np.zeros(384)
                     for ind in industries
                 ])
             else:
@@ -333,7 +369,9 @@ class EnhancedContentBasedRecommender:
         df_test: pd.DataFrame,
         embedding_config: Optional[Dict] = None
     ):
-        self.data_raw = df_history.copy()
+        data_train, data_val = train_test_split(df_history, test_size=0.2, random_state=42)
+        self.data_raw = data_train
+        self.data_val = data_val
         self.df_test = df_test.copy()
         
         # Enhanced embedder configuration
@@ -348,12 +386,14 @@ class EnhancedContentBasedRecommender:
         
         # Initialize and fit embedder
         self.embedder = EnhancedEmbedder(**self.embedder_config)
-        self.embedder.fit(df_history)
+        self.embedder.fit(data_train)
         
         # Transform candidate items
         print("Transforming candidate items...")
         self.X_candidates = self.embedder.transform(df_test)
-        
+        print('Data val :', data_val.shape)
+        print('Data train :', data_train.shape)
+        self.X_val_candidates = self.embedder.transform(data_val)
         print(f"Enhanced embeddings shape: {self.X_candidates.shape}")
     
     def build_user_profile(self, user_id: str) -> Optional[np.ndarray]:
@@ -373,7 +413,7 @@ class EnhancedContentBasedRecommender:
         
         return user_profile
     
-    def recommend_items(self, user_id: str, top_k: int = 10) -> pd.DataFrame:
+    def recommend_items(self, user_id: str, top_k: int = 10, mode: Literal['val','test'] = 'test') -> pd.DataFrame:
         """
         Generate recommendations using enhanced embeddings.
         """
@@ -384,11 +424,16 @@ class EnhancedContentBasedRecommender:
             return pd.DataFrame(columns=['industry', 'score'])
         
         # Compute similarities
-        similarities = np.dot(self.X_candidates, user_profile.T).ravel()
-        
+        if mode == 'val' :
+            similarities = np.dot(self.X_val_candidates, user_profile.T).ravel()
+            results = self.data_val.copy()
+            results['score'] = similarities  
+        else:
+            similarities = np.dot(self.X_candidates, user_profile.T).ravel()  
+            results = self.df_test.copy()
+            results['score'] = similarities  
         # Create results DataFrame
-        results = self.df_test.copy()
-        results['score'] = similarities
+        
         
         # Aggregate by industry (taking max score)
         industry_results = (
@@ -470,24 +515,45 @@ EMBEDDING_CONFIGS = {
         'sentence_model_name': 'all-MiniLM-L6-v2',
         'embedding_dim': 256,
         'use_industry_hierarchy': False,
-        'fusion_method': 'concat'
+        'fusion_method': 'concat',
+        'use_openai': False
     },
     'hierarchical_concat': {
         'sentence_model_name': 'all-MiniLM-L6-v2', 
         'embedding_dim': 384,
         'use_industry_hierarchy': True,
-        'fusion_method': 'concat'
+        'fusion_method': 'concat',
+        'use_openai': False
     },
     'weighted_fusion': {
         'sentence_model_name': 'all-mpnet-base-v2',
         'embedding_dim': 512,
         'use_industry_hierarchy': True,
-        'fusion_method': 'weighted_sum'
+        'fusion_method': 'weighted_sum',
+        'use_openai': False
     },
     'attention_fusion': {
         'sentence_model_name': 'all-mpnet-base-v2',
         'embedding_dim': 384,
         'use_industry_hierarchy': True,
-        'fusion_method': 'attention'
+        'fusion_method': 'attention',
+        'use_openai': False
+    },
+    # NEW: OpenAI configurations
+    'openai_small': {
+        'sentence_model_name': 'all-MiniLM-L6-v2',  # Fallback
+        'embedding_dim': 512,
+        'use_industry_hierarchy': True,
+        'fusion_method': 'concat',
+        'use_openai': True,
+        'openai_model': 'text-embedding-3-small'
+    },
+    'openai_large': {
+        'sentence_model_name': 'all-MiniLM-L6-v2',  # Fallback
+        'embedding_dim': 768,
+        'use_industry_hierarchy': True,
+        'fusion_method': 'concat',
+        'use_openai': True,
+        'openai_model': 'text-embedding-3-large'
     }
 }

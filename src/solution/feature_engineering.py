@@ -35,14 +35,8 @@ class AdvancedFeatureEngineer:
     def fit(self, df_history: pd.DataFrame):
         """Fit feature extractors on historical data."""
         print("Fitting advanced feature engineer...")
-        
-        # Extract service patterns
         self._extract_service_patterns(df_history)
-        
-        # Create industry co-occurrence embeddings
         self._create_industry_embeddings(df_history)
-        
-        # Geographic patterns
         self._create_location_embeddings(df_history)
         
     def extract_user_features(
@@ -185,15 +179,7 @@ class AdvancedFeatureEngineer:
         total_interactions = len(user_history)
         
         if len(location_counts) > 0:
-            # Domestic vs international preference
-            # Simplified: assume locations with 'United States' are domestic
-            # domestic_locations = [loc for loc in location_counts.index if 'United States' in str(loc)]
-            # domestic_count = sum(location_counts.get(loc, 0) for loc in domestic_locations)
-            
-            # features['domestic_preference'] = domestic_count / max(total_interactions, 1)
-            # features['international_preference'] = 1 - features['domestic_preference']
-            
-            # Top location preference
+          
             features['location_concentration'] = location_counts.iloc[0] / total_interactions
         
         return features
@@ -344,16 +330,10 @@ class AdvancedFeatureEngineer:
         }
     
     def _extract_service_patterns(self, df_history: pd.DataFrame):
-        """Extract common service patterns from historical data."""
-        # Simplified implementation
         self.service_patterns = {}
         
     def _create_industry_embeddings(self, df_history: pd.DataFrame):
-        """Create industry co-occurrence embeddings."""
-        # Simplified implementation  
         self.industry_embeddings = {}
         
     def _create_location_embeddings(self, df_history: pd.DataFrame):
-        """Create location-based embeddings."""
-        # Simplified implementation
         self.location_embeddings = {}
