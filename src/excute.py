@@ -1,36 +1,74 @@
+from typing import Dict, List, Tuple
 import pandas as pd
 from preprocessing_data import full_pipeline_preprocess_data
-from solution.content_base_for_item import ContentBaseBasicApproach
 from benchmark_data import BenchmarkOutput
-def get_recommendations_output(df_test: pd.DataFrame, approach: ContentBaseBasicApproach,  top_k: int) -> pd.DataFrame:
-    results = pd.DataFrame()
-    set_url_outsource = set()
-    for idx, row in df_test.iterrows():
-        outsource_url_company = row['linkedin_company_outsource']
-        if outsource_url_company in set_url_outsource:
-            continue
-        set_url_outsource.add(outsource_url_company)
-        recommended_items = approach.recommend_items(outsource_url_company, top_k)
-        recommended_items['linkedin_company_outsource'] = outsource_url_company
-        results = pd.concat([results, recommended_items], ignore_index=True)
-    readable_results = results[['linkedin_company_outsource', 'reviewer_company', 'score']]
-    
-    return readable_results
+from solution.advanced_ensemble import integrate_advanced_ensemble
+import numpy as np
 
-def main():
-    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/data_out.csv"
-    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/data_out_test.csv"
-    
-    data_raw = full_pipeline_preprocess_data(data_path)
-    data_test = full_pipeline_preprocess_data(data_test_path)
-    print(data_raw.columns)
-    approach_content_base = ContentBaseBasicApproach(data_raw,data_test)
-    readable_results = get_recommendations_output(data_test, approach_content_base, top_k=10)
-    
-    benchmark = BenchmarkOutput(readable_results, data_test)
-    print('---------- Evaluation Results ----------')
-    summary, per_user = benchmark.evaluate_topk(k=10)
+def main_advanced_ensemble_experiment(top_k: int = 10):
+    """Test advanced ensemble methods."""
+    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample.csv"
+    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_test.csv"
+
+    print("Loading & preprocessing data ...")
+    df_hist = full_pipeline_preprocess_data(data_path)
+    df_test = full_pipeline_preprocess_data(data_test_path)
+
+    ground_truth = {}
+    for _, row in df_test.iterrows():
+        user_id = row.get("linkedin_company_outsource")
+        if pd.isna(user_id):
+            continue
+        if user_id not in ground_truth:
+            ground_truth[user_id] = []
+        ground_truth[user_id].append(row['industry'])
+
+    # Apply advanced ensemble
+    print("Applying advanced ensemble methods ...")
+    readable_results = integrate_advanced_ensemble(
+        df_hist, df_test, ground_truth, top_k=top_k
+    )
+
+    # Evaluate
+    print("Evaluating (Advanced Ensemble) ...")
+    benchmark = BenchmarkOutput(readable_results, df_test)
+    summary, per_user = benchmark.evaluate_topk(k=top_k)
+
+    print("---------- Evaluation Results (Advanced Ensemble) ----------")
     print(summary)
-    print('---------- Per User Results ----------')
-    print(per_user)
-main()
+
+    # Save results
+    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
+    summary.to_csv(out_dir + "summary_advanced_ensemble.csv", index=False)
+    per_user.to_csv(out_dir + "per_user_advanced_ensemble.csv", index=False)
+
+
+if __name__ == "__main__":
+    print('BRANCH RUN THIS EXPERIMENT: Enhanced Recall Optimization')
+    print('\n' + '='*80)
+    
+    experiments = [
+        ("Advanced Ensemble", main_advanced_ensemble_experiment)
+    ]
+    
+    results_summary = []
+    
+    for exp_name, exp_function in experiments:
+        print(f'RUNNING {exp_name.upper()} EXPERIMENT')
+        print('='*80)
+        
+        try:
+            exp_function(top_k=10)
+            results_summary.append(f"✅ {exp_name}: Completed successfully")
+        except Exception as e:
+            print(f"❌ Error in {exp_name}: {e}")
+            results_summary.append(f"❌ {exp_name}: Failed - {e}")
+        
+        print('\n')
+    
+    print('='*80)
+    print('EXPERIMENT SUMMARY')
+    print('='*80)
+    for result in results_summary:
+        print(result)
+    

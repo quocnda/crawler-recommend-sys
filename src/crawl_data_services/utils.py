@@ -36,7 +36,9 @@ except Exception:  # pragma: no cover
         return x
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from curl_cffi import requests as creq
-
+import fcntl
+import shutil, os
+from selenium_crawl import SeleniumCrawler
 
 # =========================
 # Config mặc định
@@ -65,7 +67,7 @@ SESS = creq.Session(
     headers=COMMON_HEADERS,
     timeout=30,
 )
-
+DICT_DATA_OUTSOURCE_COMPANY: dict[str , dict[str,str]] = {}
 
 # =========================
 # HTTP helper
@@ -224,6 +226,21 @@ def get_base_url_company(start_url: str) -> List[str]:
             ans.append(urljoin("https://clutch.co", a["href"]))
     return ans
 
+def extract_services_company(soup: BeautifulSoup, company_url: str) -> List[str]:
+    """
+    Cố gắng lấy danh sách services bằng parse tĩnh.
+    Nếu không thấy gì (có thể do cần JS), fallback dùng SeleniumCrawler.
+    (Tạo instance tạm thời mỗi lần fallback – thread-safe vì không chia sẻ driver.)
+    """
+    services: List[str] = []
+    # Fallback Selenium khi parse tĩnh không có dữ liệu
+    try:
+        crawler = SeleniumCrawler()
+        data = crawler.get_industries_and_services(company_url)
+        services = data.get("services", []) or []
+        return services
+    except Exception:
+        return services  # có thể rỗng
 
 def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
     """
@@ -235,7 +252,29 @@ def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
         return "TIME_OUT",pd.DataFrame()
 
     soup = BeautifulSoup(resp.text, "html.parser")
+    prefix_company_url = company_url.split('?page=')[0]
+    if prefix_company_url not in DICT_DATA_OUTSOURCE_COMPANY:
+        DICT_DATA_OUTSOURCE_COMPANY[prefix_company_url] = {}
+        description_company = soup.find('section', class_ = 'profile-summary profile-summary__section profile-section')
+        section_services = extract_services_company(soup, company_url)
+        website_company = soup.find('div', class_='profile-header__short-actions')
+        
+        li_website = website_company.find('li', class_='profile-short-actions__item profile-short-actions__item--visit-website') if website_company else None
+        if li_website:
+            a_website = li_website.find('a')
+            if a_website and a_website.get('href'): 
+                website_url = a_website['href']
+                website_url = str(website_url) if website_url else None 
+            else:
+                website_url = None
+        else:
+            website_url = None 
 
+        DICT_DATA_OUTSOURCE_COMPANY[prefix_company_url] = {'description': description_company.get_text(strip=True) if description_company else None, 'services': section_services, 'website': website_url}
+    else:
+        description_company = DICT_DATA_OUTSOURCE_COMPANY[prefix_company_url].get('description', None)
+        section_services = DICT_DATA_OUTSOURCE_COMPANY[prefix_company_url].get('services', [])
+        website_url = DICT_DATA_OUTSOURCE_COMPANY[prefix_company_url].get('website', None) 
     contact_scope = soup.find("section", id="contact") or soup  # fallback
     link_social = extract_social_links(contact_scope)
 
@@ -251,15 +290,26 @@ def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
     for e in elements:
         project_data = extract_review_data(e)
         desc_el = e.find("div", class_="profile-review__summary mobile_hide")
+        viewmore_data = e.find("div", class_="profile-review__extra mobile_hide desktop-review-to-hide hidden")
+        background_text = ""
+        if viewmore_data:
+            background_el = viewmore_data.find("div", class_="profile-review__text with-border profile-review__extra-section")
+            background_text = background_el.get_text(strip=True) if background_el else ""
+            background_text = str(background_text) if background_text else ""
         reviewer_data = extract_reviewer_info(e)
 
         row: dict = {}
         row.update(project_data or {})
         row.update(reviewer_data or {})
         row["Project description"] = desc_el.get_text(strip=True) if desc_el else None
+        row["background"] = background_text
+        row['website_url'] = website_url
+        row['description_company_outsource'] = description_company.get_text(strip=True) if description_company else None
+        row['services_company_outsource'] = ', '.join(section_services) if section_services else None
         row.update(link_social or {})
+        # print('ROW :', row)
         rows.append(row)
-
+    
     df = pd.DataFrame(rows)
     if df.empty:
         return "NO_REVIEW", df
@@ -277,6 +327,10 @@ def get_detail_information(company_url: str) -> tuple[str,pd.DataFrame]:
         "Project size",
         "Project length",
         "Project description",
+        "background",
+        "website_url",
+        "description_company_outsource",
+        "services_company_outsource"
     ]
     cols = [c for c in preferred_cols if c in df.columns] + [
         c for c in df.columns if c not in preferred_cols
@@ -336,18 +390,38 @@ def parse_args() -> argparse.Namespace:
 SLEEP_MIN, SLEEP_MAX = 0.5, 1.5  
 
 # ==== Helper: atomic write CSV ====
-def atomic_write_csv(df: pd.DataFrame, path: str, mode: str = "w", header: bool = True) -> None:
+def atomic_write_csv(df: pd.DataFrame, path: str, header: bool = True) -> None:
+    """
+    Append-only, không bao giờ replace file hiện có.
+    Ghi header chỉ khi file trống.
+    Có khóa file để tránh ghi đè khi multi-thread.
+    """
     path = Path(path)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    if mode == "a" and path.exists():
-        df.to_csv(tmp, index=False, header=False)
-        with open(path, "ab") as fout, open(tmp, "rb") as fin:
-            shutil.copyfileobj(fin, fout)
-        tmp.unlink(missing_ok=True)
-    else:
-        df.to_csv(tmp, index=False, header=header)
-        tmp.replace(path)
 
+    # Mở file ở chế độ append-binary; tự tạo nếu chưa tồn tại
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "ab+") as fout:
+        # Khóa độc quyền
+        fcntl.flock(fout, fcntl.LOCK_EX)
+
+        # Kiểm tra kích thước sau khi đã khóa (tránh race)
+        fout.seek(0, os.SEEK_END)
+        is_empty = (fout.tell() == 0)
+
+        # Chỉ ghi header khi file trống và caller cho phép header
+        write_header = header and is_empty
+
+        # Ghi ra file tạm
+        df.to_csv(tmp, index=False, header=write_header)
+
+        # Append nội dung tmp vào cuối file đích
+        with open(tmp, "rb") as fin:
+            shutil.copyfileobj(fin, fout)
+
+        # Mở khóa & dọn file tạm
+        fcntl.flock(fout, fcntl.LOCK_UN)
+    tmp.unlink(missing_ok=True)
 # ==== Checkpoint ====
 def load_checkpoint(ckpt_file: str) -> Dict[str, Any]:
     p = Path(ckpt_file)
@@ -395,6 +469,8 @@ def process_company(url: str) -> Tuple[pd.DataFrame, pd.DataFrame, str]:
 
         status, df = get_detail_information_with_retry(url_review)
         if status in ("TIME_OUT", "ERROR", "NO_REVIEW"):
+            train_df = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame()
+            test_df  = pd.concat(test_parts,  ignore_index=True) if test_parts  else pd.DataFrame()
             return train_df, test_df, url
         if df is not None and not df.empty and len(df) > 5:
             tr, te = train_test_split(df, test_size=0.3, shuffle=True, random_state=42)
@@ -419,12 +495,7 @@ def main() -> None:
     done_urls = set(state.get("done_urls", []))
     last_page = int(state.get("last_page", 1))
 
-    if not Path(out_path).exists():
-        pd.DataFrame().to_csv(out_path, index=False)
-    if not Path(test_out_path).exists():
-        pd.DataFrame().to_csv(test_out_path, index=False)
-
-    for com in range(last_page, 3):
+    for com in range(last_page, 100):
         start_url = args.start_url
         # (Gợi ý) Có thể muốn set page luôn (không chỉ com==1) tùy site:
         if com > 1:
@@ -465,11 +536,11 @@ def main() -> None:
                 if len(batch_trains) >= flush_every or len(batch_tests) >= flush_every:
                     if batch_trains:
                         big_tr = pd.concat(batch_trains, ignore_index=True)
-                        atomic_write_csv(big_tr, out_path, mode="a", header=False)
+                        atomic_write_csv(big_tr, out_path,  header=True)
                         batch_trains.clear()
                     if batch_tests:
                         big_te = pd.concat(batch_tests, ignore_index=True)
-                        atomic_write_csv(big_te, test_out_path, mode="a", header=False)
+                        atomic_write_csv(big_te, test_out_path, header=True)
                         batch_tests.clear()
 
                     state["done_urls"] = list(done_urls)
@@ -478,10 +549,10 @@ def main() -> None:
 
         if batch_trains:
             big_tr = pd.concat(batch_trains, ignore_index=True)
-            atomic_write_csv(big_tr, out_path, mode="a", header=False)
+            atomic_write_csv(big_tr, out_path,  header=True)
         if batch_tests:
             big_te = pd.concat(batch_tests, ignore_index=True)
-            atomic_write_csv(big_te, test_out_path, mode="a", header=False)
+            atomic_write_csv(big_te, test_out_path, header=True)
 
         state["done_urls"] = list(done_urls)
         state["last_page"] = com + 1
@@ -491,3 +562,5 @@ def main() -> None:
     
 if __name__ == "__main__":
     main()
+    # data = pd.read_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/data_out.csv')
+    # print('DATA :',data.head())

@@ -3,3 +3,4 @@ venv/
 src/solution/__pycache__/
 checkpoints/
 data/
+.env
