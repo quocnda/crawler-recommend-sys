@@ -74,12 +74,10 @@ class OpenAIEmbedder:
         self,
         model: str = 'text-embedding-3-small',
         api_key: Optional[str] = None,
-        cache_dir: Optional[str] = None,
-        use_cache: bool = True,
         fallback_to_sentence_transformers: bool = True,
         fallback_model: str = 'all-MiniLM-L6-v2',
         batch_size: int = 100,
-        dimensions: Optional[int] = None  # For dimension reduction với text-embedding-3-*
+        dimensions: Optional[int] = None 
     ):
         """
         Initialize OpenAI Embedder.
@@ -95,14 +93,11 @@ class OpenAIEmbedder:
             dimensions: Số chiều output (chỉ cho text-embedding-3-*)
         """
         self.model = model
-        self.use_cache = use_cache
         self.batch_size = batch_size
         self.dimensions = dimensions
         
-        # API key
         self.api_key = api_key or os.getenv('OPENAI_API_KEY')
         if self.api_key:
-            # Clean up API key (remove spaces)
             self.api_key = self.api_key.strip().replace(' ', '')
         
         # Initialize OpenAI client
@@ -126,11 +121,6 @@ class OpenAIEmbedder:
         else:
             self._output_dimensions = self._native_dimensions
         
-        # Cache setup
-        self.cache_dir = Path(cache_dir) if cache_dir else Path('/home/ubuntu/crawl/crawler-recommend-sys/data/embedding_cache')
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.cache: Dict[str, np.ndarray] = {}
-        self._load_cache()
         
         # Fallback
         self.fallback_to_sentence_transformers = fallback_to_sentence_transformers
@@ -286,15 +276,9 @@ class OpenAIEmbedder:
         text_indices = []
         
         # Check cache first
-        for i, text in enumerate(texts):
-            cache_key = self._get_cache_key(text)
-            
-            if self.use_cache and cache_key in self.cache:
-                self.stats['cache_hits'] += 1
-                embeddings.append((i, self.cache[cache_key]))
-            else:
-                texts_to_embed.append(text)
-                text_indices.append(i)
+        for i, text in enumerate(texts):            
+            texts_to_embed.append(text)
+            text_indices.append(i)
         
         # Embed uncached texts
         if texts_to_embed:
@@ -310,12 +294,6 @@ class OpenAIEmbedder:
                         for j, emb in enumerate(batch_embeddings):
                             idx = text_indices[start + j]
                             text = texts_to_embed[start + j]
-                            
-                            # Cache the embedding
-                            if self.use_cache:
-                                cache_key = self._get_cache_key(text)
-                                self.cache[cache_key] = emb
-                            
                             embeddings.append((idx, emb))
                 else:
                     # Use fallback
@@ -358,11 +336,6 @@ class OpenAIEmbedder:
     def clear_cache(self):
         """Clear in-memory cache."""
         self.cache = {}
-    
-    def __del__(self):
-        """Save cache on destruction."""
-        if self.use_cache and self.cache:
-            self._save_cache()
 
 
 class HybridEmbedder:
@@ -370,9 +343,7 @@ class HybridEmbedder:
     Hybrid embedder cho phép chuyển đổi giữa OpenAI và SentenceTransformers.
     
     Usage:
-        embedder = HybridEmbedder(use_openai=True)
-        # hoặc
-        embedder = HybridEmbedder(use_openai=False)
+        embedder = HybridEmbedder
     """
     
     def __init__(
@@ -387,30 +358,21 @@ class HybridEmbedder:
         Initialize hybrid embedder.
         
         Args:
-            use_openai: True để dùng OpenAI, False để dùng SentenceTransformers
+            use_openai: True để dùng OpenAI, fallback dùng SentenceTransformers
             openai_model: OpenAI model name
             sentence_model: SentenceTransformer model name
             openai_dimensions: Output dimensions cho OpenAI (chỉ text-embedding-3-*)
         """
         self.use_openai = use_openai
-        
-        if use_openai:
-            self.embedder = OpenAIEmbedder(
-                model=openai_model,
-                dimensions=openai_dimensions,
-                fallback_model=sentence_model,
-                **kwargs
-            )
-            self._dimensions = self.embedder.get_sentence_embedding_dimension()
-        else:
-            if not SENTENCE_TRANSFORMERS_AVAILABLE:
-                raise ImportError("sentence-transformers not installed")
-            
-            self.embedder = SentenceTransformer(sentence_model)
-            self._dimensions = self.embedder.get_sentence_embedding_dimension()
-        
+        self.embedder = OpenAIEmbedder(
+            model=openai_model,
+            dimensions=openai_dimensions,
+            fallback_model=sentence_model,
+            **kwargs
+        )
+        self._dimensions = self.embedder.get_sentence_embedding_dimension()
+    
         print(f"HybridEmbedder initialized: {'OpenAI' if use_openai else 'SentenceTransformers'}")
-        print(f"  Model: {openai_model if use_openai else sentence_model}")
         print(f"  Dimensions: {self._dimensions}")
     
     def encode(
@@ -439,7 +401,6 @@ class HybridEmbedder:
         return self
 
 
-# Utility function để dễ dàng tạo embedder
 def get_embedder(
     use_openai: bool = True,
     openai_model: str = 'text-embedding-3-small',
@@ -463,23 +424,3 @@ def get_embedder(
         sentence_model=sentence_model,
         **kwargs
     )
-
-
-if __name__ == '__main__':
-    # Test
-    print("Testing OpenAI Embedder...")
-    
-    embedder = OpenAIEmbedder(model='text-embedding-3-small')
-    
-    test_texts = [
-        "Software development company specializing in web applications",
-        "Mobile app development services for startups",
-        "Enterprise software solutions"
-    ]
-    
-    embeddings = embedder.encode(test_texts)
-    print(f"Embeddings shape: {embeddings.shape}")
-    print(f"Stats: {embedder.get_stats()}")
-    
-    # Save cache
-    embedder.save_cache()

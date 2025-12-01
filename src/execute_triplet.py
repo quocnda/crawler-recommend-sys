@@ -66,8 +66,7 @@ def prepare_triplet_data(
     print("=" * 80)
     
     # Initialize and fit TripletManager on TRAINING data only (avoid data leakage)
-    triplet_manager = TripletManager(max_services=3)
-    triplet_manager.fit(df_train, services_column='services')
+    triplet_manager = TripletManager()
     
     # Add triplet column to both datasets
     df_train = add_triplet_column(df_train, triplet_manager, column_name='triplet')
@@ -106,7 +105,6 @@ def experiment_triplet_content_based(
     df_train: pd.DataFrame,
     df_test: pd.DataFrame,
     triplet_manager: TripletManager,
-    ground_truth: Dict[str, List[str]],
     top_k: int = 10
 ):
     """
@@ -114,10 +112,8 @@ def experiment_triplet_content_based(
     """
     print("\n" + "=" * 80)
     print("EXPERIMENT 1: Triplet Content-Based Recommendation")
-    print(f"Using {'OpenAI' if USE_OPENAI_EMBEDDINGS else 'SentenceTransformers'} embeddings")
     print("=" * 80)
     
-    # Build recommender
     recommender = TripletContentRecommender(
         df_history=df_train,
         df_test=df_test,
@@ -126,7 +122,6 @@ def experiment_triplet_content_based(
         openai_model=OPENAI_MODEL
     )
     
-    # Generate recommendations
     print("\nGenerating recommendations...")
     results = []
     seen_users = set()
@@ -166,30 +161,13 @@ def experiment_triplet_content_based(
         use_partial_match=False
     )
     print(summary_exact)
-    
-    # Evaluate with partial match
-    print("\n--- Evaluation: PARTIAL MATCH ---")
-    
-    def similarity_fn(triplet1: str, triplet2: str) -> float:
-        return triplet_manager.calculate_triplet_similarity(triplet1, triplet2)
-    
-    benchmark_partial = BenchmarkOutput(results_df, df_test, similarity_fn=similarity_fn)
-    summary_partial, per_user_partial = benchmark_partial.evaluate_topk(
-        k=top_k,
-        use_partial_match=True,
-        partial_match_threshold=0.5
-    )
-    print(summary_partial)
-    
+
     # Save results
     summary_exact.to_csv(BENCHMARK_DIR / "triplet_content_exact.csv", index=False)
-    summary_partial.to_csv(BENCHMARK_DIR / "triplet_content_partial.csv", index=False)
     per_user_exact.to_csv(BENCHMARK_DIR / "triplet_content_per_user_exact.csv", index=False)
-    per_user_partial.to_csv(BENCHMARK_DIR / "triplet_content_per_user_partial.csv", index=False)
     
     return {
         'exact': summary_exact,
-        'partial': summary_partial,
         'results': results_df
     }
 
@@ -222,9 +200,7 @@ def experiment_enhanced_triplet_content(
             'embedding_dim': 384,
             'use_industry_hierarchy': True,
             'fusion_method': 'concat'
-        },
-        use_openai=USE_OPENAI_EMBEDDINGS,
-        openai_model=OPENAI_MODEL
+        }
     )
     
     # Generate recommendations
@@ -268,29 +244,13 @@ def experiment_enhanced_triplet_content(
     )
     print(summary_exact)
     
-    # Evaluate with partial match
-    print("\n--- Evaluation: PARTIAL MATCH ---")
-    
-    def similarity_fn(triplet1: str, triplet2: str) -> float:
-        return triplet_manager.calculate_triplet_similarity(triplet1, triplet2)
-    
-    benchmark_partial = BenchmarkOutput(results_df, df_test, similarity_fn=similarity_fn)
-    summary_partial, per_user_partial = benchmark_partial.evaluate_topk(
-        k=top_k,
-        use_partial_match=True,
-        partial_match_threshold=0.5
-    )
-    print(summary_partial)
     
     # Save results
     summary_exact.to_csv(BENCHMARK_DIR / "enhanced_triplet_content_exact.csv", index=False)
-    summary_partial.to_csv(BENCHMARK_DIR / "enhanced_triplet_content_partial.csv", index=False)
     per_user_exact.to_csv(BENCHMARK_DIR / "enhanced_triplet_content_per_user_exact.csv", index=False)
-    per_user_partial.to_csv(BENCHMARK_DIR / "enhanced_triplet_content_per_user_partial.csv", index=False)
     
     return {
         'exact': summary_exact,
-        'partial': summary_partial,
         'results': results_df
     }
 
@@ -360,25 +320,10 @@ def experiment_user_collaborative(
     )
     print(summary_exact)
     
-    # Evaluate with partial match
-    print("\n--- Evaluation: PARTIAL MATCH ---")
-    
-    def similarity_fn(triplet1: str, triplet2: str) -> float:
-        return triplet_manager.calculate_triplet_similarity(triplet1, triplet2)
-    
-    benchmark_partial = BenchmarkOutput(results_df, df_test, similarity_fn=similarity_fn)
-    summary_partial, per_user_partial = benchmark_partial.evaluate_topk(
-        k=top_k,
-        use_partial_match=True,
-        partial_match_threshold=0.5
-    )
-    print(summary_partial)
     
     # Save results
     summary_exact.to_csv(BENCHMARK_DIR / "user_collab_exact.csv", index=False)
-    summary_partial.to_csv(BENCHMARK_DIR / "user_collab_partial.csv", index=False)
     per_user_exact.to_csv(BENCHMARK_DIR / "user_collab_per_user_exact.csv", index=False)
-    per_user_partial.to_csv(BENCHMARK_DIR / "user_collab_per_user_partial.csv", index=False)
     
     return {
         'exact': summary_exact,
@@ -700,11 +645,11 @@ def main():
     print(f"\nGround truth: {len(ground_truth)} users")
     
     # Run experiments
-    top_k = 1700
+    top_k = 352
     
     # Experiment 1: Content-Based
     content_exp = experiment_triplet_content_based(
-        df_train, df_test, triplet_manager, ground_truth, top_k
+        df_train, df_test, triplet_manager, top_k
     )
     
     # Experiment 1b: Enhanced Content-Based (SentenceTransformers)
@@ -717,24 +662,20 @@ def main():
         df_train, df_test, triplet_manager, ground_truth, top_k
     )
     
-    # # Experiment 3: Enhanced User Collaborative (with profile similarity)
-    enhanced_collab_exp = experiment_enhanced_user_collaborative(
-        df_train, df_test, triplet_manager, ground_truth, top_k
-    )
     
-    # Experiment 4: Triplet Ensemble (Gradient Boosting)
+    # # Experiment 4: Triplet Ensemble (Gradient Boosting)
     ensemble_exp = experiment_triplet_ensemble(
         df_train, df_test, triplet_manager, ground_truth, top_k
     )
     
-    # Experiment 5: Simple Hybrid Ensemble (weighted average)
-    hybrid_exp = experiment_hybrid_ensemble(
-        df_train, df_test, triplet_manager,
-        content_exp['results'],
-        collab_exp['results'],
-        ground_truth, top_k,
-        weights=(0.7, 0.3)  # 70% content, 30% collaborative
-    )
+    # # Experiment 5: Simple Hybrid Ensemble (weighted average)
+    # hybrid_exp = experiment_hybrid_ensemble(
+    #     df_train, df_test, triplet_manager,
+    #     content_exp['results'],
+    #     collab_exp['results'],
+    #     ground_truth, top_k,
+    #     weights=(0.7, 0.3)  # 70% content, 30% collaborative
+    # )
     
     # Summary comparison
     print("\n" + "=" * 80)
@@ -747,9 +688,8 @@ def main():
         'Content-Based': content_exp,
         'Enhanced Content': enhanced_content_exp,
         'User Collaborative': collab_exp,
-        'Enhanced Collaborative': enhanced_collab_exp,
         'Triplet Ensemble (GB)': ensemble_exp,
-        'Hybrid Ensemble': hybrid_exp
+        # 'Hybrid Ensemble': hybrid_exp
     }
     
     print("\n{:<25} {:>12} {:>12} {:>12} {:>12}".format(

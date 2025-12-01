@@ -60,10 +60,8 @@ class EnhancedTripletEmbedder:
         sentence_model_name: str = 'all-MiniLM-L6-v2',
         embedding_dim: int = 384,
         use_industry_hierarchy: bool = True,
-        fusion_method: str = 'concat',  # 'concat', 'weighted_sum'
+        fusion_method: str = 'concat',  
         device: str = None,
-        use_openai: bool = True,  # NEW: Use OpenAI embeddings
-        openai_model: str = 'text-embedding-3-small'  # NEW: OpenAI model
     ):
         self.triplet_manager = triplet_manager
         self.sentence_model_name = sentence_model_name
@@ -71,33 +69,13 @@ class EnhancedTripletEmbedder:
         self.use_industry_hierarchy = use_industry_hierarchy
         self.fusion_method = fusion_method
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
-        self.use_openai = use_openai
         
         # Initialize embedder (OpenAI or SentenceTransformers)
-        self.sentence_model = None
-        
-        if use_openai and OPENAI_EMBEDDER_AVAILABLE:
-            try:
-                self.sentence_model = HybridEmbedder(
-                    use_openai=True,
-                    openai_model=openai_model,
-                    sentence_model=sentence_model_name
-                )
-                print(f"EnhancedTripletEmbedder using OpenAI: {openai_model}")
-            except Exception as e:
-                print(f"Warning: Could not initialize OpenAI embedder: {e}")
-                self.sentence_model = None
-        
-        if self.sentence_model is None and SENTENCE_TRANSFORMERS_AVAILABLE:
-            try:
-                print(f"Loading Sentence Transformer: {sentence_model_name}")
-                self.sentence_model = SentenceTransformer(sentence_model_name)
-                self.sentence_model.to(self.device)
-                print(f"EnhancedTripletEmbedder using SentenceTransformers: {sentence_model_name}")
-            except Exception as e:
-                print(f"Warning: Could not load sentence transformer: {e}")
-                raise ValueError("No embedding model available")
-        
+        print(f"Loading Sentence Transformer: {sentence_model_name}")
+        self.sentence_model = SentenceTransformer(sentence_model_name)
+        self.sentence_model.to(self.device)
+        print(f"EnhancedTripletEmbedder using SentenceTransformers: {sentence_model_name}")
+
         # Learnable components
         self.industry_embeddings: Dict[str, np.ndarray] = {}
         self.industry_hierarchy: Dict[str, Dict] = {}
@@ -112,39 +90,39 @@ class EnhancedTripletEmbedder:
         # Embedding dimensions
         self.text_dim = self.sentence_model.get_sentence_embedding_dimension()
         
-    def _create_industry_hierarchy(self, industries: List[str]) -> Dict[str, Dict]:
-        """
-        Create hierarchical clustering of industries for better embeddings.
-        """
-        if not self.use_industry_hierarchy or len(industries) < 3:
-            return {}
+    # def _create_industry_hierarchy(self, industries: List[str]) -> Dict[str, Dict]:
+    #     """
+    #     Create hierarchical clustering of industries for better embeddings.
+    #     """
+    #     if not self.use_industry_hierarchy or len(industries) < 3:
+    #         return {}
         
-        print(f"Creating industry hierarchy for {len(industries)} industries...")
+    #     print(f"Creating industry hierarchy for {len(industries)} industries...")
         
-        # Encode industry names
-        industry_texts = [ind.lower().replace('&', 'and') for ind in industries]
-        industry_embeddings = self.sentence_model.encode(
-            industry_texts, 
-            convert_to_numpy=True,
-            show_progress_bar=False
-        )
+    #     # Encode industry names
+    #     industry_texts = [ind.lower().replace('&', 'and') for ind in industries]
+    #     industry_embeddings = self.sentence_model.encode(
+    #         industry_texts, 
+    #         convert_to_numpy=True,
+    #         show_progress_bar=False
+    #     )
         
-        # Cluster industries into groups
-        n_clusters = min(10, max(2, len(industries) // 3))
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        clusters = kmeans.fit_predict(industry_embeddings)
+    #     # Cluster industries into groups
+    #     n_clusters = min(10, max(2, len(industries) // 3))
+    #     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    #     clusters = kmeans.fit_predict(industry_embeddings)
         
-        hierarchy = {}
-        for i, industry in enumerate(industries):
-            hierarchy[industry] = {
-                'cluster': int(clusters[i]),
-                'embedding': industry_embeddings[i],
-                'cluster_center': kmeans.cluster_centers_[clusters[i]]
-            }
-            self.industry_embeddings[industry] = industry_embeddings[i]
+    #     hierarchy = {}
+    #     for i, industry in enumerate(industries):
+    #         hierarchy[industry] = {
+    #             'cluster': int(clusters[i]),
+    #             'embedding': industry_embeddings[i],
+    #             'cluster_center': kmeans.cluster_centers_[clusters[i]]
+    #         }
+    #         self.industry_embeddings[industry] = industry_embeddings[i]
         
-        self.industry_clusters = kmeans
-        return hierarchy
+    #     self.industry_clusters = kmeans
+    #     return hierarchy
     
     def _create_size_embeddings(self):
         """Create embeddings for client size buckets."""
@@ -370,29 +348,6 @@ class EnhancedTripletEmbedder:
             
             return combined
         
-        elif self.fusion_method == 'weighted_sum':
-            # Resize all to text_dim and weighted sum
-            target_dim = self.text_dim
-            
-            # Resize triplet (3 * text_dim -> text_dim)
-            triplet_resized = triplet_emb[:, :target_dim] if triplet_emb.shape[1] >= target_dim else \
-                np.pad(triplet_emb, ((0, 0), (0, target_dim - triplet_emb.shape[1])))
-            
-            # Resize categorical
-            cat_resized = np.pad(cat_emb, ((0, 0), (0, max(0, target_dim - cat_emb.shape[1]))))[:, :target_dim]
-            
-            # Resize numerical
-            num_resized = np.pad(num_emb, ((0, 0), (0, max(0, target_dim - num_emb.shape[1]))))[:, :target_dim]
-            
-            combined = (
-                weights['text'] * text_emb +
-                weights['triplet'] * triplet_resized +
-                weights['categorical'] * cat_resized +
-                weights['numerical'] * num_resized
-            )
-            
-            return combined
-        
         else:
             # Default to concat
             return np.hstack([text_emb, triplet_emb, cat_emb, num_emb])
@@ -403,11 +358,7 @@ class EnhancedTripletEmbedder:
         """
         print("Fitting Enhanced Triplet Embedder...")
         
-        # 1. Create industry hierarchy
-        if 'industry' in df.columns:
-            unique_industries = df['industry'].dropna().unique().tolist()
-            self.industry_hierarchy = self._create_industry_hierarchy(unique_industries)
-        
+  
         # 2. Create size embeddings
         self._create_size_embeddings()
         
@@ -467,8 +418,6 @@ class EnhancedTripletContentRecommender:
         df_test: pd.DataFrame,
         triplet_manager: TripletManager,
         embedding_config: Optional[Dict] = None,
-        use_openai: bool = True,  # NEW: Use OpenAI embeddings
-        openai_model: str = 'text-embedding-3-small'  # NEW: OpenAI model
     ):
         # Split train/val
         data_train, data_val = train_test_split(df_history, test_size=0.2, random_state=42)
@@ -486,9 +435,6 @@ class EnhancedTripletContentRecommender:
             'fusion_method': 'concat'
         }
         
-        # Add OpenAI config
-        self.embedding_config['use_openai'] = use_openai
-        self.embedding_config['openai_model'] = openai_model
         
         print("Building enhanced triplet feature representations...")
         
