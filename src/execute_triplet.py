@@ -14,11 +14,18 @@ Experiments:
 NEW: Support for OpenAI embeddings (use_openai=True)
 """
 
+import os
+from pathlib import Path
 from typing import Dict, List, Tuple
 import pandas as pd
 import numpy as np
 from preprocessing_data import full_pipeline_preprocess_data
 from benchmark_data import BenchmarkOutput
+
+# Base directories (relative to this file's location)
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+BENCHMARK_DIR = DATA_DIR / "benchmark"
 from triplet_utils import TripletManager, add_triplet_column
 from solution.triplet_recommender import TripletContentRecommender
 from solution.user_collaborative import UserBasedCollaborativeRecommender
@@ -148,7 +155,7 @@ def experiment_triplet_content_based(
             continue
     
     results_df = pd.DataFrame(results)
-    results_df.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/recommend_triplet.csv', index=False)
+    results_df.to_csv(BENCHMARK_DIR / 'recommend_triplet.csv', index=False)
     print(f"Generated {len(results_df)} recommendations for {len(seen_users)} users")
     
     # Evaluate with exact match
@@ -175,11 +182,10 @@ def experiment_triplet_content_based(
     print(summary_partial)
     
     # Save results
-    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
-    summary_exact.to_csv(out_dir + "triplet_content_exact.csv", index=False)
-    summary_partial.to_csv(out_dir + "triplet_content_partial.csv", index=False)
-    per_user_exact.to_csv(out_dir + "triplet_content_per_user_exact.csv", index=False)
-    per_user_partial.to_csv(out_dir + "triplet_content_per_user_partial.csv", index=False)
+    summary_exact.to_csv(BENCHMARK_DIR / "triplet_content_exact.csv", index=False)
+    summary_partial.to_csv(BENCHMARK_DIR / "triplet_content_partial.csv", index=False)
+    per_user_exact.to_csv(BENCHMARK_DIR / "triplet_content_per_user_exact.csv", index=False)
+    per_user_partial.to_csv(BENCHMARK_DIR / "triplet_content_per_user_partial.csv", index=False)
     
     return {
         'exact': summary_exact,
@@ -250,7 +256,7 @@ def experiment_enhanced_triplet_content(
             continue
     
     results_df = pd.DataFrame(results)
-    results_df.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/recommend_triplet_enhanced_content.csv', index=False)
+    results_df.to_csv(BENCHMARK_DIR / 'recommend_triplet_enhanced_content.csv', index=False)
     print(f"Generated {len(results_df)} recommendations for {len(seen_users)} users")
     
     # Evaluate with exact match
@@ -277,11 +283,10 @@ def experiment_enhanced_triplet_content(
     print(summary_partial)
     
     # Save results
-    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
-    summary_exact.to_csv(out_dir + "enhanced_triplet_content_exact.csv", index=False)
-    summary_partial.to_csv(out_dir + "enhanced_triplet_content_partial.csv", index=False)
-    per_user_exact.to_csv(out_dir + "enhanced_triplet_content_per_user_exact.csv", index=False)
-    per_user_partial.to_csv(out_dir + "enhanced_triplet_content_per_user_partial.csv", index=False)
+    summary_exact.to_csv(BENCHMARK_DIR / "enhanced_triplet_content_exact.csv", index=False)
+    summary_partial.to_csv(BENCHMARK_DIR / "enhanced_triplet_content_partial.csv", index=False)
+    per_user_exact.to_csv(BENCHMARK_DIR / "enhanced_triplet_content_per_user_exact.csv", index=False)
+    per_user_partial.to_csv(BENCHMARK_DIR / "enhanced_triplet_content_per_user_partial.csv", index=False)
     
     return {
         'exact': summary_exact,
@@ -343,7 +348,7 @@ def experiment_user_collaborative(
             continue
     
     results_df = pd.DataFrame(results)
-    results_df.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/recommend_triplet_collab.csv', index=False)
+    results_df.to_csv(BENCHMARK_DIR / 'recommend_triplet_collab.csv', index=False)
     print(f"Generated {len(results_df)} recommendations for {len(seen_users)} users")
     
     # Evaluate with exact match
@@ -370,11 +375,10 @@ def experiment_user_collaborative(
     print(summary_partial)
     
     # Save results
-    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
-    summary_exact.to_csv(out_dir + "user_collab_exact.csv", index=False)
-    summary_partial.to_csv(out_dir + "user_collab_partial.csv", index=False)
-    per_user_exact.to_csv(out_dir + "user_collab_per_user_exact.csv", index=False)
-    per_user_partial.to_csv(out_dir + "user_collab_per_user_partial.csv", index=False)
+    summary_exact.to_csv(BENCHMARK_DIR / "user_collab_exact.csv", index=False)
+    summary_partial.to_csv(BENCHMARK_DIR / "user_collab_partial.csv", index=False)
+    per_user_exact.to_csv(BENCHMARK_DIR / "user_collab_per_user_exact.csv", index=False)
+    per_user_partial.to_csv(BENCHMARK_DIR / "user_collab_per_user_partial.csv", index=False)
     
     return {
         'exact': summary_exact,
@@ -437,7 +441,7 @@ def experiment_hybrid_ensemble(
         .head(top_k)
         .reset_index(drop=True)
     )
-    results_df.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/recommend_triplet_hybrid.csv', index=False)
+    results_df.to_csv(BENCHMARK_DIR / 'recommend_triplet_hybrid.csv', index=False)
     print(f"Generated {len(results_df)} ensemble recommendations")
     
     # Evaluate with exact match
@@ -464,11 +468,10 @@ def experiment_hybrid_ensemble(
     print(summary_partial)
     
     # Save results
-    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
-    summary_exact.to_csv(out_dir + "hybrid_ensemble_exact.csv", index=False)
-    summary_partial.to_csv(out_dir + "hybrid_ensemble_partial.csv", index=False)
-    per_user_exact.to_csv(out_dir + "hybrid_ensemble_per_user_exact.csv", index=False)
-    per_user_partial.to_csv(out_dir + "hybrid_ensemble_per_user_partial.csv", index=False)
+    summary_exact.to_csv(BENCHMARK_DIR / "hybrid_ensemble_exact.csv", index=False)
+    summary_partial.to_csv(BENCHMARK_DIR / "hybrid_ensemble_partial.csv", index=False)
+    per_user_exact.to_csv(BENCHMARK_DIR / "hybrid_ensemble_per_user_exact.csv", index=False)
+    per_user_partial.to_csv(BENCHMARK_DIR / "hybrid_ensemble_per_user_partial.csv", index=False)
     
     return {
         'exact': summary_exact,
@@ -536,7 +539,7 @@ def experiment_enhanced_user_collaborative(
             continue
     
     results_df = pd.DataFrame(results)
-    results_df.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/recommend_triplet_enhanced_collab.csv', index=False)
+    results_df.to_csv(BENCHMARK_DIR / 'recommend_triplet_enhanced_collab.csv', index=False)
     print(f"Generated {len(results_df)} recommendations for {len(seen_users)} users")
     
     # Evaluate with exact match
@@ -563,11 +566,10 @@ def experiment_enhanced_user_collaborative(
     print(summary_partial)
     
     # Save results
-    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
-    summary_exact.to_csv(out_dir + "enhanced_collab_exact.csv", index=False)
-    summary_partial.to_csv(out_dir + "enhanced_collab_partial.csv", index=False)
-    per_user_exact.to_csv(out_dir + "enhanced_collab_per_user_exact.csv", index=False)
-    per_user_partial.to_csv(out_dir + "enhanced_collab_per_user_partial.csv", index=False)
+    summary_exact.to_csv(BENCHMARK_DIR / "enhanced_collab_exact.csv", index=False)
+    summary_partial.to_csv(BENCHMARK_DIR / "enhanced_collab_partial.csv", index=False)
+    per_user_exact.to_csv(BENCHMARK_DIR / "enhanced_collab_per_user_exact.csv", index=False)
+    per_user_partial.to_csv(BENCHMARK_DIR / "enhanced_collab_per_user_partial.csv", index=False)
     
     return {
         'exact': summary_exact,
@@ -640,7 +642,7 @@ def experiment_triplet_ensemble(
             continue
     
     results_df = pd.DataFrame(results)
-    results_df.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/recommend_triplet_ensemble.csv', index=False)
+    results_df.to_csv(BENCHMARK_DIR / 'recommend_triplet_ensemble.csv', index=False)
     print(f"Generated {len(results_df)} ensemble recommendations for {len(seen_users)} users")
     
     # Evaluate with exact match
@@ -667,11 +669,10 @@ def experiment_triplet_ensemble(
     print(summary_partial)
     
     # Save results
-    out_dir = "/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/"
-    summary_exact.to_csv(out_dir + "triplet_ensemble_exact.csv", index=False)
-    summary_partial.to_csv(out_dir + "triplet_ensemble_partial.csv", index=False)
-    per_user_exact.to_csv(out_dir + "triplet_ensemble_per_user_exact.csv", index=False)
-    per_user_partial.to_csv(out_dir + "triplet_ensemble_per_user_partial.csv", index=False)
+    summary_exact.to_csv(BENCHMARK_DIR / "triplet_ensemble_exact.csv", index=False)
+    summary_partial.to_csv(BENCHMARK_DIR / "triplet_ensemble_partial.csv", index=False)
+    per_user_exact.to_csv(BENCHMARK_DIR / "triplet_ensemble_per_user_exact.csv", index=False)
+    per_user_partial.to_csv(BENCHMARK_DIR / "triplet_ensemble_per_user_partial.csv", index=False)
     
     return {
         'exact': summary_exact,
@@ -687,19 +688,19 @@ def main():
     print("=" * 80)
     
     # Paths
-    data_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_0_100_update.csv"
-    data_test_path = "/home/ubuntu/crawl/crawler-recommend-sys/data/sample_0_100_update_test.csv"
+    data_path = DATA_DIR / "sample_0_100_update.csv"
+    data_test_path = DATA_DIR / "sample_0_100_update_test.csv"
     
     # Prepare data
     df_train, df_test, triplet_manager = prepare_triplet_data(data_path, data_test_path)
-    df_test.to_csv('/home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/recommend_test_triplet.csv')
+    df_test.to_csv(BENCHMARK_DIR / 'recommend_test_triplet.csv')
     
     # Build ground truth
     ground_truth = build_ground_truth_triplets(df_test)
     print(f"\nGround truth: {len(ground_truth)} users")
     
     # Run experiments
-    top_k = 352
+    top_k = 1700
     
     # Experiment 1: Content-Based
     content_exp = experiment_triplet_content_based(
@@ -712,14 +713,14 @@ def main():
     )
 
     # # Experiment 2: Basic User Collaborative
-    # collab_exp = experiment_user_collaborative(
-    #     df_train, df_test, triplet_manager, ground_truth, top_k
-    # )
+    collab_exp = experiment_user_collaborative(
+        df_train, df_test, triplet_manager, ground_truth, top_k
+    )
     
     # # Experiment 3: Enhanced User Collaborative (with profile similarity)
-    # enhanced_collab_exp = experiment_enhanced_user_collaborative(
-    #     df_train, df_test, triplet_manager, ground_truth, top_k
-    # )
+    enhanced_collab_exp = experiment_enhanced_user_collaborative(
+        df_train, df_test, triplet_manager, ground_truth, top_k
+    )
     
     # Experiment 4: Triplet Ensemble (Gradient Boosting)
     ensemble_exp = experiment_triplet_ensemble(
@@ -727,13 +728,13 @@ def main():
     )
     
     # Experiment 5: Simple Hybrid Ensemble (weighted average)
-    # hybrid_exp = experiment_hybrid_ensemble(
-    #     df_train, df_test, triplet_manager,
-    #     content_exp['results'],
-    #     collab_exp['results'],
-    #     ground_truth, top_k,
-    #     weights=(0.7, 0.3)  # 70% content, 30% collaborative
-    # )
+    hybrid_exp = experiment_hybrid_ensemble(
+        df_train, df_test, triplet_manager,
+        content_exp['results'],
+        collab_exp['results'],
+        ground_truth, top_k,
+        weights=(0.7, 0.3)  # 70% content, 30% collaborative
+    )
     
     # Summary comparison
     print("\n" + "=" * 80)
@@ -745,10 +746,10 @@ def main():
     experiments = {
         'Content-Based': content_exp,
         'Enhanced Content': enhanced_content_exp,
-        # 'User Collaborative': collab_exp,
-        # 'Enhanced Collaborative': enhanced_collab_exp,
+        'User Collaborative': collab_exp,
+        'Enhanced Collaborative': enhanced_collab_exp,
         'Triplet Ensemble (GB)': ensemble_exp,
-        # 'Hybrid Ensemble': hybrid_exp
+        'Hybrid Ensemble': hybrid_exp
     }
     
     print("\n{:<25} {:>12} {:>12} {:>12} {:>12}".format(
@@ -791,7 +792,7 @@ def main():
             ))
     
     print("\n" + "=" * 80)
-    print("All results saved to: /home/ubuntu/crawl/crawler-recommend-sys/data/benchmark/")
+    print(f"All results saved to: {BENCHMARK_DIR}")
     print("=" * 80)
 
 
