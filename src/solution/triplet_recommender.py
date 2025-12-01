@@ -48,8 +48,8 @@ class TripletContentRecommender:
         triplet_manager: TripletManager,
         sentence_model_name: str = 'all-MiniLM-L6-v2',
         embedding_weights: Dict[str, float] = None,
-        use_openai: bool = True,  # NEW: Use OpenAI embeddings
-        openai_model: str = 'text-embedding-3-small'  # NEW: OpenAI model
+        use_openai: bool = True,  
+        openai_model: str = 'text-embedding-3-small' 
     ):
         """
         Args:
@@ -79,28 +79,13 @@ class TripletContentRecommender:
             'numerical': 0.1             # Client size, budget numerical
         }
         
-        # Initialize embedder (OpenAI or SentenceTransformers)
-        self.sentence_model = None
+        # Initialize embedder (OpenAI)   
         
-        if use_openai and OPENAI_EMBEDDER_AVAILABLE:
-            try:
-                self.sentence_model = HybridEmbedder(
-                    use_openai=True,
-                    openai_model=openai_model,
-                    sentence_model=sentence_model_name
-                )
-                print(f"Using OpenAI embeddings: {openai_model}")
-            except Exception as e:
-                print(f"Warning: Could not initialize OpenAI embedder: {e}")
-                self.sentence_model = None
-        
-        if self.sentence_model is None and SENTENCE_TRANSFORMERS_AVAILABLE:
-            try:
-                self.sentence_model = SentenceTransformer(sentence_model_name)
-                print(f"Using SentenceTransformers: {sentence_model_name}")
-            except Exception as e:
-                print(f"Warning: Could not load sentence transformer: {e}")
-                self.sentence_model = None
+        self.sentence_model = HybridEmbedder(
+            use_openai=True,
+            openai_model=openai_model,
+            sentence_model=sentence_model_name
+        )
         
         self.scaler = StandardScaler()
         
@@ -115,8 +100,6 @@ class TripletContentRecommender:
     
     def _build_features(self):
         """Build feature matrices for train, val, and test sets."""
-        # Build vocabularies from TRAINING data only
-        print("Building vocabularies from training data...")
         self._build_vocabularies(self.data_train)
         
         # Build features for each set using same vocabulary
@@ -143,7 +126,6 @@ class TripletContentRecommender:
         parsed = df['triplet'].apply(self.triplet_manager.parse_triplet)
         
         industries = [p[0] for p in parsed]
-        sizes = [p[1] for p in parsed]
         services_list = [p[2] for p in parsed]
         
         # Build industry vocabulary
@@ -165,10 +147,6 @@ class TripletContentRecommender:
         print(f"  Service vocabulary: {len(self.service_vocab)} unique services")
             
     def _embed_triplet_structure(self, df: pd.DataFrame) -> np.ndarray:
-        """
-        Embed the triplet structure (industry, size, services) using one-hot encoding.
-        Uses pre-built vocabularies to ensure consistent dimensions.
-        """
         if 'triplet' not in df.columns:
             raise ValueError("DataFrame must have 'triplet' column")
         
@@ -189,7 +167,6 @@ class TripletContentRecommender:
         for i, ind in enumerate(industries):
             if ind in industry_map:
                 industry_matrix[i, industry_map[ind]] = 1.0
-            # If industry not in vocab (new industry in test), leave as zeros
         
         # One-hot encode size using vocabulary
         size_map = {s: i for i, s in enumerate(self.size_vocab)}
@@ -209,7 +186,6 @@ class TripletContentRecommender:
                 for svc in services:
                     if svc in service_map:
                         service_matrix[i, service_map[svc]] = 1.0
-                    # If service not in vocab, ignore (OOV handling)
         
         # Concatenate
         triplet_features = np.hstack([industry_matrix, size_matrix, service_matrix])
@@ -220,7 +196,6 @@ class TripletContentRecommender:
         """Embed text fields using OpenAI or SentenceTransformers."""
         embeddings = {}
         
-        # Get embedding dimension
         if self.sentence_model is None:
             embed_dim = 1536 if self.use_openai else 384
             return {
